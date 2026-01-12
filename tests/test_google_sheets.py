@@ -38,6 +38,150 @@ class TestGoogleSheetsClient:
         assert values == [["A1", "B1"], ["A2", "B2"]]
 
 
+class TestGoogleSheetsClientSheetOperations:
+    """Test cases for GoogleSheetsClient sheet operations."""
+
+    @patch("spirrow_prismind.integrations.google_sheets.build")
+    def test_create_sheet(self, mock_build):
+        """Test creating a new sheet."""
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        mock_service.spreadsheets().batchUpdate().execute.return_value = {
+            "replies": [{"addSheet": {"properties": {"sheetId": 12345, "title": "NewSheet"}}}]
+        }
+
+        client = GoogleSheetsClient.__new__(GoogleSheetsClient)
+        client._service = mock_service
+
+        result = client.create_sheet("spreadsheet123", "NewSheet")
+
+        # Verify batchUpdate was called with correct parameters
+        mock_service.spreadsheets().batchUpdate.assert_called()
+        call_args = mock_service.spreadsheets().batchUpdate.call_args
+        assert call_args[1]["spreadsheetId"] == "spreadsheet123"
+        assert "addSheet" in str(call_args[1]["body"])
+
+    @patch("spirrow_prismind.integrations.google_sheets.build")
+    def test_rename_sheet(self, mock_build):
+        """Test renaming a sheet."""
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        mock_service.spreadsheets().batchUpdate().execute.return_value = {"replies": [{}]}
+
+        client = GoogleSheetsClient.__new__(GoogleSheetsClient)
+        client._service = mock_service
+
+        result = client.rename_sheet("spreadsheet123", 0, "RenamedSheet")
+
+        # Verify batchUpdate was called with correct parameters
+        mock_service.spreadsheets().batchUpdate.assert_called()
+        call_args = mock_service.spreadsheets().batchUpdate.call_args
+        assert call_args[1]["spreadsheetId"] == "spreadsheet123"
+        assert "updateSheetProperties" in str(call_args[1]["body"])
+
+    @patch("spirrow_prismind.integrations.google_sheets.build")
+    def test_get_first_sheet_id(self, mock_build):
+        """Test getting the first sheet ID."""
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        mock_service.spreadsheets().get().execute.return_value = {
+            "sheets": [
+                {"properties": {"sheetId": 0, "title": "Sheet1"}},
+                {"properties": {"sheetId": 1, "title": "Sheet2"}},
+            ]
+        }
+
+        client = GoogleSheetsClient.__new__(GoogleSheetsClient)
+        client._service = mock_service
+
+        sheet_id = client.get_first_sheet_id("spreadsheet123")
+
+        assert sheet_id == 0
+
+    @patch("spirrow_prismind.integrations.google_sheets.build")
+    def test_initialize_project_sheets(self, mock_build):
+        """Test initializing project sheets."""
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+
+        # Mock get spreadsheet info
+        mock_service.spreadsheets().get().execute.return_value = {
+            "sheets": [{"properties": {"sheetId": 0, "title": "Sheet1"}}]
+        }
+        # Mock batchUpdate for rename and create
+        mock_service.spreadsheets().batchUpdate().execute.return_value = {"replies": [{}]}
+
+        client = GoogleSheetsClient.__new__(GoogleSheetsClient)
+        client._service = mock_service
+
+        sheets = client.initialize_project_sheets(
+            spreadsheet_id="spreadsheet123",
+            summary_name="Summary",
+            progress_name="Progress",
+            catalog_name="Catalog",
+        )
+
+        assert sheets == ["Summary", "Progress", "Catalog"]
+        # Verify batchUpdate was called multiple times (for rename + creates)
+        assert mock_service.spreadsheets().batchUpdate.call_count >= 3
+
+    @patch("spirrow_prismind.integrations.google_sheets.build")
+    def test_read_range(self, mock_build):
+        """Test reading a range."""
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        mock_service.spreadsheets().values().get().execute.return_value = {
+            "values": [["A1", "B1"], ["A2", "B2"]]
+        }
+
+        client = GoogleSheetsClient.__new__(GoogleSheetsClient)
+        client._service = mock_service
+
+        result = client.read_range("spreadsheet123", "Sheet1!A1:B2")
+
+        assert result["values"] == [["A1", "B1"], ["A2", "B2"]]
+
+    @patch("spirrow_prismind.integrations.google_sheets.build")
+    def test_update_range(self, mock_build):
+        """Test updating a range (alias for update_sheet_values)."""
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        mock_service.spreadsheets().values().update().execute.return_value = {
+            "updatedCells": 4
+        }
+
+        client = GoogleSheetsClient.__new__(GoogleSheetsClient)
+        client._service = mock_service
+
+        result = client.update_range(
+            "spreadsheet123",
+            "Sheet1!A1:B2",
+            [["A1", "B1"], ["A2", "B2"]],
+        )
+
+        assert result["updatedCells"] == 4
+
+    @patch("spirrow_prismind.integrations.google_sheets.build")
+    def test_append_rows(self, mock_build):
+        """Test appending rows (alias for append_sheet_values)."""
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        mock_service.spreadsheets().values().append().execute.return_value = {
+            "updates": {"updatedRows": 2}
+        }
+
+        client = GoogleSheetsClient.__new__(GoogleSheetsClient)
+        client._service = mock_service
+
+        result = client.append_rows(
+            "spreadsheet123",
+            "Sheet1!A:B",
+            [["A3", "B3"], ["A4", "B4"]],
+        )
+
+        assert result["updates"]["updatedRows"] == 2
+
+
 class TestCatalogEntry:
     """Test cases for CatalogEntry model."""
 

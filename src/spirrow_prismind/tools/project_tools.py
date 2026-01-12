@@ -21,6 +21,9 @@ from ..models import (
     SimilarProject,
     SwitchProjectResult,
     UpdateProjectResult,
+    create_catalog_template,
+    create_progress_template,
+    create_summary_template,
 )
 
 logger = logging.getLogger(__name__)
@@ -250,13 +253,22 @@ class ProjectTools:
                         f"update_project で設定を更新するか、別のIDで作成してください。",
             )
 
-        # Step 2: Check for name duplicate
+        # Step 2: Check for name duplicate (always blocked, regardless of force)
         duplicate_name = ""
         all_projects = self._list_projects_with_fallback()
         for proj_doc in all_projects:
             if proj_doc.metadata.get("name") == name:
                 duplicate_name = proj_doc.metadata.get("project_id", "")
                 break
+
+        if duplicate_name:
+            return SetupProjectResult(
+                success=False,
+                project_id=project,
+                duplicate_name=duplicate_name,
+                message=f"同名のプロジェクト '{name}' が既に存在します（ID: {duplicate_name}）。"
+                        f"別の名前を指定するか、既存プロジェクトを使用してください。",
+            )
 
         # Step 3: Search for similar projects (only if RAG is available)
         similar_projects: list[SimilarProject] = []
@@ -275,32 +287,22 @@ class ProjectTools:
                     description=doc.metadata.get("description", ""),
                     similarity=doc.score,
                 ))
-        
-        # Step 4: Check if confirmation is needed
-        if not force and (duplicate_name or similar_projects):
-            result = SetupProjectResult(
+
+        # Step 4: Check if confirmation is needed (only for similar projects)
+        if not force and similar_projects:
+            messages = ["📋 類似のプロジェクトが見つかりました:"]
+            for sp in similar_projects:
+                messages.append(f"  - {sp.project_id} (類似度: {sp.similarity_percent}%): {sp.name}")
+            messages.append("\n新規プロジェクトとして作成する場合は force=True を指定してください。")
+
+            return SetupProjectResult(
                 success=False,
                 project_id=project,
                 name=name,
                 requires_confirmation=True,
-                duplicate_name=duplicate_name,
                 similar_projects=similar_projects,
+                message="\n".join(messages),
             )
-            
-            # Build message
-            messages = []
-            if duplicate_name:
-                messages.append(f"⚠️ 同名のプロジェクト '{duplicate_name}' が存在します。")
-            
-            if similar_projects:
-                messages.append("📋 類似のプロジェクトが見つかりました:")
-                for sp in similar_projects:
-                    messages.append(f"  - {sp.project_id} (類似度: {sp.similarity_percent}%): {sp.name}")
-            
-            messages.append("\n新規プロジェクトとして作成しますか？")
-            result.message = "\n".join(messages)
-            
-            return result
         
         # Step 5: Create project config
         config = ProjectConfig(
@@ -347,27 +349,61 @@ class ProjectTools:
         
         sheets_created: list[str] = []
         folders_created: list[str] = []
-        
-        # Step 6: Create sheets if requested
+
+        # Step 6: Create sheets with templates if requested
         if create_sheets:
+            # Initialize sheets (rename default sheet + create new ones)
             try:
-                sheet_names = [
-                    config.sheets.summary,
-                    config.sheets.progress,
-                    config.sheets.catalog,
-                ]
-                
-                for sheet_name in sheet_names:
-                    # Check if sheet exists, create if not
-                    try:
-                        self.sheets.create_sheet(spreadsheet_id, sheet_name)
-                        sheets_created.append(sheet_name)
-                    except Exception as e:
-                        # Sheet might already exist
-                        logger.debug(f"Sheet '{sheet_name}' might already exist: {e}")
-                
+                sheets_created = self.sheets.initialize_project_sheets(
+                    spreadsheet_id=spreadsheet_id,
+                    summary_name=config.sheets.summary,
+                    progress_name=config.sheets.progress,
+                    catalog_name=config.sheets.catalog,
+                )
+                logger.info(f"Initialized sheets: {sheets_created}")
             except Exception as e:
-                logger.error(f"Failed to create sheets: {e}")
+                logger.error(f"Failed to initialize sheets: {e}")
+                # Continue anyway - sheets might already exist
+
+            # Write Summary template
+            try:
+                summary_data = create_summary_template(
+                    project_name=name,
+                    description=description,
+                    created_by=user,
+                )
+                self.sheets.update_sheet_values(
+                    spreadsheet_id=spreadsheet_id,
+                    range_name=f"{config.sheets.summary}!A1",
+                    values=summary_data,
+                )
+                logger.info(f"Wrote Summary template to {config.sheets.summary}")
+            except Exception as e:
+                logger.error(f"Failed to write Summary template: {e}")
+
+            # Write Progress template (headers + initial task)
+            try:
+                progress_data = create_progress_template()
+                self.sheets.update_sheet_values(
+                    spreadsheet_id=spreadsheet_id,
+                    range_name=f"{config.sheets.progress}!A1",
+                    values=progress_data,
+                )
+                logger.info(f"Wrote Progress template to {config.sheets.progress}")
+            except Exception as e:
+                logger.error(f"Failed to write Progress template: {e}")
+
+            # Write Catalog template (headers only)
+            try:
+                catalog_data = create_catalog_template()
+                self.sheets.update_sheet_values(
+                    spreadsheet_id=spreadsheet_id,
+                    range_name=f"{config.sheets.catalog}!A1",
+                    values=catalog_data,
+                )
+                logger.info(f"Wrote Catalog template to {config.sheets.catalog}")
+            except Exception as e:
+                logger.error(f"Failed to write Catalog template: {e}")
         
         # Step 7: Create folders if requested
         if create_folders:

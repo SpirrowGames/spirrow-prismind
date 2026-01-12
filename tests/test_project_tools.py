@@ -119,6 +119,59 @@ class TestSetupProject:
         assert result.success is True
         assert result.project_id == "proj_d"
 
+    def test_setup_project_duplicate_name_blocked(self, project_tools, mock_rag_client):
+        """Test setup fails with duplicate project name even with force=True."""
+        # Setup first project
+        project_tools.setup_project(
+            project="name_proj1",
+            name="Duplicate Name Test",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Try to create project with same name but different ID (should fail)
+        result = project_tools.setup_project(
+            project="name_proj2",
+            name="Duplicate Name Test",  # Same name
+            spreadsheet_id="sheet2",
+            root_folder_id="folder2",
+            create_sheets=False,
+            create_folders=False,
+            force=True,  # Even with force, duplicate name should be blocked
+        )
+
+        assert result.success is False
+        assert result.duplicate_name == "name_proj1"
+        assert "同名のプロジェクト" in result.message
+
+    def test_setup_project_similar_name_allowed_with_force(self, project_tools, mock_rag_client):
+        """Test setup allows similar (but not identical) names with force=True."""
+        # Setup first project
+        project_tools.setup_project(
+            project="similar_proj1",
+            name="My Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Create project with similar but different name (should succeed with force)
+        result = project_tools.setup_project(
+            project="similar_proj2",
+            name="My Project 2",  # Similar but not identical
+            spreadsheet_id="sheet2",
+            root_folder_id="folder2",
+            create_sheets=False,
+            create_folders=False,
+            force=True,
+        )
+
+        assert result.success is True
+        assert result.project_id == "similar_proj2"
+
 
 class TestSwitchProject:
     """Tests for switch_project method."""

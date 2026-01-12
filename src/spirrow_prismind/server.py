@@ -66,6 +66,14 @@ TOOLS = [
             "required": ["setting", "value"],
         },
     ),
+    Tool(
+        name="check_services_status",
+        description="RAGサーバーとMemoryサーバーの接続状態を確認します。サーバーが利用可能かどうか、コレクション/スキーマの自動作成状態も確認できます。",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
     # Session Management
     Tool(
         name="start_session",
@@ -837,6 +845,27 @@ class PrismindServer:
                 "old_value": result.old_value,
                 "new_value": result.new_value,
                 "validation_errors": result.validation_errors,
+                "message": result.message,
+            }
+
+        elif name == "check_services_status":
+            if not self._setup_tools:
+                config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+                self._setup_tools = SetupTools(config_path)
+
+            result = self._setup_tools.check_services_status()
+            return {
+                "success": result.success,
+                "services": [
+                    {
+                        "name": s.name,
+                        "available": s.available,
+                        "url": s.url,
+                        "message": s.message,
+                    }
+                    for s in result.services
+                ],
+                "all_available": result.all_required_available,
                 "message": result.message,
             }
 

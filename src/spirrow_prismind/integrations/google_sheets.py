@@ -273,3 +273,221 @@ class GoogleSheetsClient:
         end_col = chr(ord("A") + len(values) - 1)
         range_name = f"{sheet_name}!A{row_number}:{end_col}{row_number}"
         return self.update_sheet_values(spreadsheet_id, range_name, [values])
+
+    def create_sheet(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+    ) -> dict:
+        """Create a new sheet (tab) in a spreadsheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_name: Name of the new sheet
+
+        Returns:
+            API response
+
+        Raises:
+            RuntimeError: If the sheet already exists or creation fails
+        """
+        try:
+            request_body = {
+                "requests": [
+                    {
+                        "addSheet": {
+                            "properties": {
+                                "title": sheet_name,
+                            }
+                        }
+                    }
+                ]
+            }
+            result = (
+                self.service.spreadsheets()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+                .execute()
+            )
+            return result
+        except HttpError as e:
+            raise RuntimeError(f"Failed to create sheet '{sheet_name}': {e}")
+
+    def rename_sheet(
+        self,
+        spreadsheet_id: str,
+        sheet_id: int,
+        new_name: str,
+    ) -> dict:
+        """Rename a sheet (tab) in a spreadsheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_id: The sheet ID (numeric, not name)
+            new_name: New name for the sheet
+
+        Returns:
+            API response
+
+        Raises:
+            RuntimeError: If renaming fails
+        """
+        try:
+            request_body = {
+                "requests": [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_id,
+                                "title": new_name,
+                            },
+                            "fields": "title",
+                        }
+                    }
+                ]
+            }
+            result = (
+                self.service.spreadsheets()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+                .execute()
+            )
+            return result
+        except HttpError as e:
+            raise RuntimeError(f"Failed to rename sheet to '{new_name}': {e}")
+
+    def get_first_sheet_id(self, spreadsheet_id: str) -> int:
+        """Get the ID of the first sheet in a spreadsheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+
+        Returns:
+            Sheet ID (numeric)
+
+        Raises:
+            RuntimeError: If getting sheet info fails
+        """
+        try:
+            info = self.get_spreadsheet_info(spreadsheet_id)
+            sheets = info.get("sheets", [])
+            if sheets:
+                return sheets[0]["properties"]["sheetId"]
+            raise RuntimeError("No sheets found in spreadsheet")
+        except HttpError as e:
+            raise RuntimeError(f"Failed to get sheet info: {e}")
+
+    def initialize_project_sheets(
+        self,
+        spreadsheet_id: str,
+        summary_name: str,
+        progress_name: str,
+        catalog_name: str,
+    ) -> list[str]:
+        """Initialize project sheets by renaming default sheet and creating others.
+
+        This handles the case where a new spreadsheet has a default "Sheet1"
+        that needs to be renamed to "Summary", and other sheets need to be created.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            summary_name: Name for summary sheet
+            progress_name: Name for progress sheet
+            catalog_name: Name for catalog sheet
+
+        Returns:
+            List of created/renamed sheet names
+
+        Raises:
+            RuntimeError: If initialization fails
+        """
+        created_sheets = []
+
+        try:
+            # Get the first sheet ID and rename it to Summary
+            first_sheet_id = self.get_first_sheet_id(spreadsheet_id)
+            self.rename_sheet(spreadsheet_id, first_sheet_id, summary_name)
+            created_sheets.append(summary_name)
+
+            # Create Progress sheet
+            self.create_sheet(spreadsheet_id, progress_name)
+            created_sheets.append(progress_name)
+
+            # Create Catalog sheet
+            self.create_sheet(spreadsheet_id, catalog_name)
+            created_sheets.append(catalog_name)
+
+            return created_sheets
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize project sheets: {e}")
+
+    def read_range(
+        self,
+        spreadsheet_id: str,
+        range_name: str,
+    ) -> dict:
+        """Read values from a spreadsheet range.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            range_name: A1 notation of range (e.g., "Sheet1!A1:D10")
+
+        Returns:
+            Dict with 'values' key containing list of rows
+        """
+        try:
+            result = (
+                self.service.spreadsheets()
+                .values()
+                .get(spreadsheetId=spreadsheet_id, range=range_name)
+                .execute()
+            )
+            return result
+        except HttpError as e:
+            raise RuntimeError(f"Failed to read range: {e}")
+
+    def update_range(
+        self,
+        spreadsheet_id: str,
+        range_name: str,
+        values: list[list[Any]],
+        value_input_option: str = "USER_ENTERED",
+    ) -> dict:
+        """Update values in a spreadsheet range.
+
+        Alias for update_sheet_values for consistency.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            range_name: A1 notation of range
+            values: 2D list of values to write
+            value_input_option: How to interpret input
+
+        Returns:
+            API response
+        """
+        return self.update_sheet_values(
+            spreadsheet_id, range_name, values, value_input_option
+        )
+
+    def append_rows(
+        self,
+        spreadsheet_id: str,
+        range_name: str,
+        values: list[list[Any]],
+        value_input_option: str = "USER_ENTERED",
+    ) -> dict:
+        """Append rows to a spreadsheet.
+
+        Alias for append_sheet_values for consistency.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            range_name: A1 notation of range to append after
+            values: 2D list of values to append
+            value_input_option: How to interpret input
+
+        Returns:
+            API response
+        """
+        return self.append_sheet_values(
+            spreadsheet_id, range_name, values, value_input_option
+        )

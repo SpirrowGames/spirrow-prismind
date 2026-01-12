@@ -12,9 +12,13 @@ except ImportError:
 
 import tomli_w
 
+import httpx
+
 from ..models import (
+    CheckServicesResult,
     ConfigureResult,
     GetSetupStatusResult,
+    ServiceStatus,
     SettingStatus,
 )
 
@@ -342,3 +346,139 @@ class SetupTools:
     def get_available_settings(self) -> list[str]:
         """Get list of available setting names."""
         return list(SETTINGS_REGISTRY.keys())
+
+    def check_services_status(self, timeout: float = 3.0) -> CheckServicesResult:
+        """Check the status of RAG and Memory services.
+
+        Args:
+            timeout: Connection timeout in seconds
+
+        Returns:
+            CheckServicesResult
+        """
+        config_data = self._load_toml()
+
+        services = []
+
+        # Check RAG server
+        rag_url = self._get_nested_value(config_data, "services.rag_server_url")
+        if not rag_url:
+            rag_url = SETTINGS_REGISTRY["services.rag_server_url"]["default"]
+
+        rag_status = self._check_rag_service(rag_url, timeout)
+        services.append(rag_status)
+
+        # Check Memory server
+        memory_url = self._get_nested_value(config_data, "services.memory_server_url")
+        if not memory_url:
+            memory_url = SETTINGS_REGISTRY["services.memory_server_url"]["default"]
+
+        memory_status = self._check_memory_service(memory_url, timeout)
+        services.append(memory_status)
+
+        # Determine overall status
+        all_available = all(s.available for s in services)
+        available_count = sum(1 for s in services if s.available)
+
+        if all_available:
+            message = "全てのサービスが利用可能です。"
+        elif available_count == 0:
+            message = "全てのサービスが利用不可です。インメモリモードで動作します。"
+        else:
+            available_names = [s.name for s in services if s.available]
+            unavailable_names = [s.name for s in services if not s.available]
+            message = f"利用可能: {', '.join(available_names)}。利用不可: {', '.join(unavailable_names)}"
+
+        return CheckServicesResult(
+            success=True,
+            services=services,
+            all_required_available=all_available,
+            message=message,
+        )
+
+    def _check_rag_service(self, url: str, timeout: float) -> ServiceStatus:
+        """Check RAG server availability."""
+        try:
+            response = httpx.get(
+                f"{url.rstrip('/')}/api/v1/heartbeat",
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                return ServiceStatus(
+                    name="RAG Server",
+                    available=True,
+                    url=url,
+                    message="接続成功。コレクションは自動作成されます。",
+                )
+            else:
+                return ServiceStatus(
+                    name="RAG Server",
+                    available=False,
+                    url=url,
+                    message=f"サーバーがステータス {response.status_code} を返しました",
+                )
+        except httpx.ConnectError:
+            return ServiceStatus(
+                name="RAG Server",
+                available=False,
+                url=url,
+                message="接続できませんでした。サーバーが起動していない可能性があります。",
+            )
+        except httpx.TimeoutException:
+            return ServiceStatus(
+                name="RAG Server",
+                available=False,
+                url=url,
+                message="接続がタイムアウトしました。",
+            )
+        except Exception as e:
+            return ServiceStatus(
+                name="RAG Server",
+                available=False,
+                url=url,
+                message=f"エラー: {e}",
+            )
+
+    def _check_memory_service(self, url: str, timeout: float) -> ServiceStatus:
+        """Check Memory server availability."""
+        try:
+            response = httpx.get(
+                f"{url.rstrip('/')}/health",
+                timeout=timeout,
+            )
+            # Accept any 2xx response
+            if 200 <= response.status_code < 300:
+                return ServiceStatus(
+                    name="Memory Server",
+                    available=True,
+                    url=url,
+                    message="接続成功。セッション状態を永続化できます。",
+                )
+            else:
+                return ServiceStatus(
+                    name="Memory Server",
+                    available=False,
+                    url=url,
+                    message=f"サーバーがステータス {response.status_code} を返しました",
+                )
+        except httpx.ConnectError:
+            return ServiceStatus(
+                name="Memory Server",
+                available=False,
+                url=url,
+                message="接続できませんでした。サーバーが起動していない可能性があります。",
+            )
+        except httpx.TimeoutException:
+            return ServiceStatus(
+                name="Memory Server",
+                available=False,
+                url=url,
+                message="接続がタイムアウトしました。",
+            )
+        except Exception as e:
+            return ServiceStatus(
+                name="Memory Server",
+                available=False,
+                url=url,
+                message=f"エラー: {e}",
+            )
