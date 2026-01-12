@@ -39,6 +39,11 @@ from .session import (
     SessionContext,
     SessionState,
 )
+from .setup import (
+    ConfigureResult,
+    GetSetupStatusResult,
+    SettingStatus,
+)
 
 __all__ = [
     # Catalog
@@ -82,4 +87,8 @@ __all__ = [
     "SaveSessionResult",
     "SessionContext",
     "SessionState",
+    # Setup
+    "ConfigureResult",
+    "GetSetupStatusResult",
+    "SettingStatus",
 ]

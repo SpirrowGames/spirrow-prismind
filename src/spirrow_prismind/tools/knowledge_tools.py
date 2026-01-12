@@ -31,18 +31,18 @@ class KnowledgeTools:
         self,
         rag_client: RAGClient,
         project_tools: ProjectTools,
-        default_user: str = "default",
+        user_name: str = "default",
     ):
         """Initialize knowledge tools.
         
         Args:
             rag_client: RAG client for knowledge storage
             project_tools: Project tools for config access
-            default_user: Default user ID
+            user_name: Default user ID
         """
         self.rag = rag_client
         self.project_tools = project_tools
-        self.default_user = default_user
+        self.user_name = user_name
 
     def add_knowledge(
         self,
@@ -66,7 +66,7 @@ class KnowledgeTools:
         Returns:
             AddKnowledgeResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
         
         # Validate category
         if category not in self.CATEGORIES:
@@ -133,7 +133,7 @@ class KnowledgeTools:
         Returns:
             SearchKnowledgeResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
         
         # If project is None and include_general, search all
         # If project is specified, search that project (+ general if include_general)

@@ -56,7 +56,7 @@ def project_tools(mock_rag_client, mock_memory_client, mock_sheets_client, mock_
         memory_client=mock_memory_client,
         sheets_client=mock_sheets_client,
         drive_client=mock_drive_client,
-        default_user="test_user",
+        user_name="test_user",
     )
 
 
@@ -70,7 +70,7 @@ def session_tools(mock_rag_client, mock_memory_client, mock_sheets_client, proje
         memory_client=mock_memory_client,
         sheets_client=mock_sheets_client,
         project_tools=project_tools,
-        default_user="test_user",
+        user_name="test_user",
     )
 
 
@@ -85,7 +85,7 @@ def document_tools(mock_rag_client, mock_sheets_client, mock_drive_client, mock_
         sheets_client=mock_sheets_client,
         rag_client=mock_rag_client,
         project_tools=project_tools,
-        default_user="test_user",
+        user_name="test_user",
     )
 
 
@@ -98,7 +98,7 @@ def catalog_tools(mock_rag_client, mock_sheets_client, project_tools):
         rag_client=mock_rag_client,
         sheets_client=mock_sheets_client,
         project_tools=project_tools,
-        default_user="test_user",
+        user_name="test_user",
     )
 
 
@@ -110,7 +110,7 @@ def knowledge_tools(mock_rag_client, project_tools):
     return KnowledgeTools(
         rag_client=mock_rag_client,
         project_tools=project_tools,
-        default_user="test_user",
+        user_name="test_user",
     )
 
 
@@ -123,5 +123,5 @@ def progress_tools(mock_sheets_client, mock_memory_client, project_tools):
         sheets_client=mock_sheets_client,
         memory_client=mock_memory_client,
         project_tools=project_tools,
-        default_user="test_user",
+        user_name="test_user",
     )

@@ -39,7 +39,7 @@ class DocumentTools:
         sheets_client: GoogleSheetsClient,
         rag_client: RAGClient,
         project_tools: ProjectTools,
-        default_user: str = "default",
+        user_name: str = "default",
     ):
         """Initialize document tools.
         
@@ -49,14 +49,14 @@ class DocumentTools:
             sheets_client: Google Sheets client
             rag_client: RAG client
             project_tools: Project tools for config access
-            default_user: Default user ID
+            user_name: Default user ID
         """
         self.docs = docs_client
         self.drive = drive_client
         self.sheets = sheets_client
         self.rag = rag_client
         self.project_tools = project_tools
-        self.default_user = default_user
+        self.user_name = user_name
 
     def get_document(
         self,
@@ -78,7 +78,7 @@ class DocumentTools:
         Returns:
             DocumentResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
         
         # If doc_id is specified, get directly
         if doc_id:
@@ -217,7 +217,7 @@ class DocumentTools:
         Returns:
             CreateDocumentResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
         
         # Get current project config
         config = self.project_tools.get_project_config(user=user)
@@ -337,7 +337,7 @@ class DocumentTools:
         Returns:
             UpdateDocumentResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
         updated_fields = []
         
         try:

@@ -39,7 +39,7 @@ class ProjectTools:
         memory_client: MemoryClient,
         sheets_client: GoogleSheetsClient,
         drive_client: GoogleDriveClient,
-        default_user: str = "default",
+        user_name: str = "default",
         projects_folder_id: str = "",
     ):
         """Initialize project tools.
@@ -49,14 +49,14 @@ class ProjectTools:
             memory_client: Memory client for current project
             sheets_client: Google Sheets client
             drive_client: Google Drive client
-            default_user: Default user ID
+            user_name: Default user ID
             projects_folder_id: Root folder ID for all projects (from config)
         """
         self.rag = rag_client
         self.memory = memory_client
         self.sheets = sheets_client
         self.drive = drive_client
-        self.default_user = default_user
+        self.user_name = user_name
         self.projects_folder_id = projects_folder_id
 
         # Log service availability
@@ -193,7 +193,7 @@ class ProjectTools:
         Returns:
             SetupProjectResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
 
         # Auto-creation mode: create project folder and spreadsheet
         auto_created_folder = False
@@ -422,7 +422,7 @@ class ProjectTools:
         Returns:
             SwitchProjectResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
 
         # Get project config
         config_doc = self._get_project_config_with_fallback(project)
@@ -465,7 +465,7 @@ class ProjectTools:
         Returns:
             ListProjectsResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
 
         # Get all projects
         project_docs = self._list_projects_with_fallback()
@@ -668,7 +668,7 @@ class ProjectTools:
         Returns:
             ProjectConfig if found, None otherwise
         """
-        user = user or self.default_user
+        user = user or self.user_name
 
         # If no project specified, get current
         if project is None:
@@ -696,5 +696,5 @@ class ProjectTools:
         Returns:
             Project ID if set, None otherwise
         """
-        user = user or self.default_user
+        user = user or self.user_name
         return self._get_current_project_with_fallback(user)

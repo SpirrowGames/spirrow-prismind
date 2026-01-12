@@ -42,7 +42,7 @@ class LogConfig:
 class SessionConfig:
     """Session configuration."""
     auto_save_interval: int = 20
-    default_user: str = "default"
+    user_name: str = ""
 
 
 @dataclass
@@ -120,7 +120,7 @@ class Config:
             ),
             session=SessionConfig(
                 auto_save_interval=data.get("session", {}).get("auto_save_interval", 20),
-                default_user=data.get("session", {}).get("default_user", "default"),
+                user_name=data.get("session", {}).get("user_name", ""),
             ),
         )
 
@@ -185,9 +185,9 @@ class Config:
         return self.services.memory_server_url
 
     @property
-    def default_user(self) -> str:
-        """Get default user."""
-        return self.session.default_user
+    def user_name(self) -> str:
+        """Get user name."""
+        return self.session.user_name
 
     @property
     def projects_folder_id(self) -> str:

@@ -27,7 +27,7 @@ class ProgressTools:
         sheets_client: GoogleSheetsClient,
         memory_client: MemoryClient,
         project_tools: ProjectTools,
-        default_user: str = "default",
+        user_name: str = "default",
     ):
         """Initialize progress tools.
 
@@ -35,12 +35,12 @@ class ProgressTools:
             sheets_client: Google Sheets client
             memory_client: Memory client for session state
             project_tools: Project tools for config access
-            default_user: Default user ID
+            user_name: Default user ID
         """
         self.sheets = sheets_client
         self.memory = memory_client
         self.project_tools = project_tools
-        self.default_user = default_user
+        self.user_name = user_name
 
     def get_progress(
         self,
@@ -58,7 +58,7 @@ class ProgressTools:
         Returns:
             GetProgressResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
 
         # Get project config
         if project is None:
@@ -203,7 +203,7 @@ class ProgressTools:
         Returns:
             UpdateProgressResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
 
         # Validate status
         valid_statuses = ["not_started", "in_progress", "completed", "blocked"]
@@ -365,7 +365,7 @@ class ProgressTools:
         Returns:
             UpdateProgressResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
 
         # Get project config
         if project is None:

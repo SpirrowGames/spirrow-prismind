@@ -19,7 +19,7 @@ class CatalogTools:
         rag_client: RAGClient,
         sheets_client: GoogleSheetsClient,
         project_tools: ProjectTools,
-        default_user: str = "default",
+        user_name: str = "default",
     ):
         """Initialize catalog tools.
         
@@ -27,12 +27,12 @@ class CatalogTools:
             rag_client: RAG client for catalog cache
             sheets_client: Google Sheets client for master catalog
             project_tools: Project tools for config access
-            default_user: Default user ID
+            user_name: Default user ID
         """
         self.rag = rag_client
         self.sheets = sheets_client
         self.project_tools = project_tools
-        self.default_user = default_user
+        self.user_name = user_name
 
     def search_catalog(
         self,
@@ -62,7 +62,7 @@ class CatalogTools:
         Returns:
             SearchCatalogResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
         
         # Get project if not specified
         if project is None:
@@ -163,7 +163,7 @@ class CatalogTools:
         Returns:
             SyncCatalogResult
         """
-        user = user or self.default_user
+        user = user or self.user_name
         
         # Get project config
         if project is None:

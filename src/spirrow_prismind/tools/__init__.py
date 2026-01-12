@@ -6,6 +6,7 @@ from .knowledge_tools import KnowledgeTools
 from .progress_tools import ProgressTools
 from .project_tools import ProjectTools
 from .session_tools import SessionTools
+from .setup_tools import SetupTools
 
 __all__ = [
     "CatalogTools",
@@ -14,4 +15,5 @@ __all__ = [
     "ProgressTools",
     "ProjectTools",
     "SessionTools",
+    "SetupTools",
 ]

@@ -32,12 +32,40 @@ from .tools import (
     ProgressTools,
     ProjectTools,
     SessionTools,
+    SetupTools,
 )
 
 logger = logging.getLogger(__name__)
 
 # Tool definitions
 TOOLS = [
+    # Setup Wizard
+    Tool(
+        name="get_setup_status",
+        description="Spirrow-Prismindの設定状況を確認します。必須設定とオプション設定の一覧、設定済み/未設定の状態を表示します。",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
+    Tool(
+        name="configure",
+        description="Spirrow-Prismindの設定を変更します。config.tomlに設定を書き込みます。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "setting": {
+                    "type": "string",
+                    "description": "設定名（例: google.credentials_path, services.memory_server_url, session.user_name）",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "設定値",
+                },
+            },
+            "required": ["setting", "value"],
+        },
+    ),
     # Session Management
     Tool(
         name="start_session",
@@ -529,13 +557,14 @@ class PrismindServer:
         self._drive_client: Optional[GoogleDriveClient] = None
         
         # Tools (initialized lazily)
+        self._setup_tools: Optional[SetupTools] = None
         self._project_tools: Optional[ProjectTools] = None
         self._session_tools: Optional[SessionTools] = None
         self._document_tools: Optional[DocumentTools] = None
         self._catalog_tools: Optional[CatalogTools] = None
         self._knowledge_tools: Optional[KnowledgeTools] = None
         self._progress_tools: Optional[ProgressTools] = None
-        
+
         # Register handlers
         self._register_handlers()
 
@@ -609,7 +638,7 @@ class PrismindServer:
                 memory_client=self._memory_client,
                 sheets_client=self._sheets_client,
                 drive_client=self._drive_client,
-                default_user=self.config.default_user,
+                user_name=self.config.user_name,
                 projects_folder_id=self.config.projects_folder_id,
             )
             
@@ -618,7 +647,7 @@ class PrismindServer:
                 memory_client=self._memory_client,
                 sheets_client=self._sheets_client,
                 project_tools=self._project_tools,
-                default_user=self.config.default_user,
+                user_name=self.config.user_name,
             )
             
             self._document_tools = DocumentTools(
@@ -627,27 +656,27 @@ class PrismindServer:
                 sheets_client=self._sheets_client,
                 rag_client=self._rag_client,
                 project_tools=self._project_tools,
-                default_user=self.config.default_user,
+                user_name=self.config.user_name,
             )
             
             self._catalog_tools = CatalogTools(
                 rag_client=self._rag_client,
                 sheets_client=self._sheets_client,
                 project_tools=self._project_tools,
-                default_user=self.config.default_user,
+                user_name=self.config.user_name,
             )
 
             self._progress_tools = ProgressTools(
                 sheets_client=self._sheets_client,
                 memory_client=self._memory_client,
                 project_tools=self._project_tools,
-                default_user=self.config.default_user,
+                user_name=self.config.user_name,
             )
 
         self._knowledge_tools = KnowledgeTools(
             rag_client=self._rag_client,
             project_tools=self._project_tools,
-            default_user=self.config.default_user,
+            user_name=self.config.user_name,
         )
         
         self._initialized = True
@@ -753,6 +782,63 @@ class PrismindServer:
 
     async def _dispatch_tool(self, name: str, args: dict) -> dict:
         """Dispatch tool call to appropriate handler."""
+
+        # Setup tools - always available (before full initialization)
+        if name == "get_setup_status":
+            if not self._setup_tools:
+                config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+                self._setup_tools = SetupTools(config_path)
+
+            result = self._setup_tools.get_setup_status()
+            return {
+                "success": result.success,
+                "ready": result.ready,
+                "required_settings": [
+                    {
+                        "name": s.name,
+                        "required": s.required,
+                        "configured": s.configured,
+                        "current_value": s.current_value,
+                        "default_value": s.default_value,
+                        "description": s.description,
+                        "benefit": s.benefit,
+                    }
+                    for s in result.required_settings
+                ],
+                "optional_settings": [
+                    {
+                        "name": s.name,
+                        "required": s.required,
+                        "configured": s.configured,
+                        "current_value": s.current_value,
+                        "default_value": s.default_value,
+                        "description": s.description,
+                        "benefit": s.benefit,
+                    }
+                    for s in result.optional_settings
+                ],
+                "config_file_path": result.config_file_path,
+                "config_file_exists": result.config_file_exists,
+                "message": result.message,
+            }
+
+        elif name == "configure":
+            if not self._setup_tools:
+                config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+                self._setup_tools = SetupTools(config_path)
+
+            result = self._setup_tools.configure(
+                setting=args["setting"],
+                value=args["value"],
+            )
+            return {
+                "success": result.success,
+                "setting_name": result.setting_name,
+                "old_value": result.old_value,
+                "new_value": result.new_value,
+                "validation_errors": result.validation_errors,
+                "message": result.message,
+            }
 
         # Check if required tools are initialized
         google_required_tools = [

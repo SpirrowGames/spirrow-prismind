@@ -31,7 +31,7 @@ class SessionTools:
         memory_client: MemoryClient,
         sheets_client: GoogleSheetsClient,
         project_tools: ProjectTools,
-        default_user: str = "default",
+        user_name: str = "default",
     ):
         """Initialize session tools.
         
@@ -40,13 +40,13 @@ class SessionTools:
             memory_client: Memory client for session state
             sheets_client: Google Sheets client for progress
             project_tools: Project tools for config access
-            default_user: Default user ID
+            user_name: Default user ID
         """
         self.rag = rag_client
         self.memory = memory_client
         self.sheets = sheets_client
         self.project_tools = project_tools
-        self.default_user = default_user
+        self.user_name = user_name
         
         # Track session start time
         self._session_start: Optional[datetime] = None
@@ -67,7 +67,7 @@ class SessionTools:
         Returns:
             SessionContext with loaded state and recommendations
         """
-        user = user or self.default_user
+        user = user or self.user_name
         
         # Get project (from parameter or current)
         if project is None:
@@ -170,7 +170,7 @@ class SessionTools:
         Returns:
             EndSessionResult
         """
-        user = user or self._current_user or self.default_user
+        user = user or self._current_user or self.user_name
         project = self._current_project
         
         if not project:
@@ -251,7 +251,7 @@ class SessionTools:
         Returns:
             SaveSessionResult
         """
-        user = user or self._current_user or self.default_user
+        user = user or self._current_user or self.user_name
         project = self._current_project
         
         if not project:
@@ -314,7 +314,7 @@ class SessionTools:
         Returns:
             SaveSessionResult
         """
-        user = user or self._current_user or self.default_user
+        user = user or self._current_user or self.user_name
         project = self._current_project
         
         if not project:

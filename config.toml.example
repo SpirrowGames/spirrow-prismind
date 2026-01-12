@@ -26,5 +26,5 @@ format = "text"
 [session]
 # Auto-save interval in minutes
 auto_save_interval = 20
-# Default user ID
-default_user = "default"
+# User name (shared across multiple PCs for session state identification)
+user_name = ""
