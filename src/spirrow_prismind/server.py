@@ -29,6 +29,7 @@ from .tools import (
     CatalogTools,
     DocumentTools,
     KnowledgeTools,
+    ProgressTools,
     ProjectTools,
     SessionTools,
 )
@@ -425,6 +426,89 @@ TOOLS = [
             "required": ["query"],
         },
     ),
+    # Progress Management
+    Tool(
+        name="get_progress",
+        description="プロジェクトの進捗状況をGoogle Sheetsから取得します。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "プロジェクトID（省略時は現在のプロジェクト）",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "フェーズフィルタ（省略時は全フェーズ）",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="update_task_status",
+        description="タスクのステータスをGoogle Sheetsで更新します。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "タスクID（例: T01）",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "新しいステータス（not_started/in_progress/completed/blocked）",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "フェーズ名（タスクIDが曖昧な場合に指定）",
+                },
+                "blockers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "ブロッカーリスト",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "備考",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "プロジェクトID",
+                },
+            },
+            "required": ["task_id", "status"],
+        },
+    ),
+    Tool(
+        name="add_task",
+        description="進捗シートに新しいタスクを追加します。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "phase": {
+                    "type": "string",
+                    "description": "フェーズ名（例: Phase 4）",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "タスクID（例: T01）",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "タスク名",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "タスクの説明",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "プロジェクトID",
+                },
+            },
+            "required": ["phase", "task_id", "name"],
+        },
+    ),
 ]
 
 
@@ -450,6 +534,7 @@ class PrismindServer:
         self._document_tools: Optional[DocumentTools] = None
         self._catalog_tools: Optional[CatalogTools] = None
         self._knowledge_tools: Optional[KnowledgeTools] = None
+        self._progress_tools: Optional[ProgressTools] = None
         
         # Register handlers
         self._register_handlers()
@@ -527,7 +612,14 @@ class PrismindServer:
                 project_tools=self._project_tools,
                 default_user=self.config.default_user,
             )
-        
+
+            self._progress_tools = ProgressTools(
+                sheets_client=self._sheets_client,
+                memory_client=self._memory_client,
+                project_tools=self._project_tools,
+                default_user=self.config.default_user,
+            )
+
         self._knowledge_tools = KnowledgeTools(
             rag_client=self._rag_client,
             project_tools=self._project_tools,
@@ -890,7 +982,77 @@ class PrismindServer:
                 ],
                 "message": result.message,
             }
-        
+
+        # Progress Management
+        elif name == "get_progress":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.get_progress(
+                project=args.get("project"),
+                phase=args.get("phase"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "current_phase": result.current_phase,
+                "phases": [
+                    {
+                        "phase": p.phase,
+                        "status": p.status,
+                        "tasks": [
+                            {
+                                "task_id": t.task_id,
+                                "name": t.name,
+                                "status": t.status,
+                                "blockers": t.blockers,
+                                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                                "notes": t.notes,
+                            }
+                            for t in p.tasks
+                        ],
+                    }
+                    for p in result.phases
+                ],
+                "message": result.message,
+            }
+
+        elif name == "update_task_status":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.update_task_status(
+                task_id=args["task_id"],
+                status=args["status"],
+                phase=args.get("phase"),
+                blockers=args.get("blockers"),
+                notes=args.get("notes"),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "task_id": result.task_id,
+                "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        elif name == "add_task":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.add_task(
+                phase=args["phase"],
+                task_id=args["task_id"],
+                name=args["name"],
+                description=args.get("description", ""),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "task_id": result.task_id,
+                "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
         else:
             return {"success": False, "error": f"Unknown tool: {name}"}
 

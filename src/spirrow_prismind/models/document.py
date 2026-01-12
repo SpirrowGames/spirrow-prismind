@@ -43,6 +43,7 @@ class CreateDocumentResult:
     success: bool
     doc_id: str = ""
     name: str = ""
+    doc_url: str = ""
     source: str = ""
     catalog_registered: bool = False
     message: str = ""

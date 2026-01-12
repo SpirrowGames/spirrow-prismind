@@ -33,17 +33,29 @@
 - `document_tools.py` - get_document, create_document, update_document
 - `catalog_tools.py` - search_catalog, sync_catalog
 - `knowledge_tools.py` - add_knowledge, search_knowledge
+- `progress_tools.py` - get_progress, update_task_status, add_task, complete_task, start_task, block_task
 
 #### サーバ
-- `server.py` - MCPサーバ本体（11ツール登録済み）
+- `server.py` - MCPサーバ本体（14ツール登録済み）
 - `config.py` - 設定管理（TOML読み込み）
+
+#### テスト（`tests/`）
+- `conftest.py` - Pytest フィクスチャ（モッククライアント初期化）
+- `test_google_sheets.py` - Google Sheets統合テスト（5テスト）
+- `test_project_tools.py` - ProjectToolsユニットテスト（17テスト）
+- `test_session_tools.py` - SessionToolsユニットテスト（16テスト）
+- `test_document_tools.py` - DocumentToolsユニットテスト（12テスト）
+- `test_catalog_tools.py` - CatalogToolsユニットテスト（12テスト）
+- `test_knowledge_tools.py` - KnowledgeToolsユニットテスト（17テスト）
+- `test_progress_tools.py` - ProgressToolsユニットテスト（16テスト）
+- `mocks/mock_rag.py` - RAGクライアントのインメモリモック
+- `mocks/mock_memory.py` - Memoryクライアントのインメモリモック
+
+**テスト合計: 95テスト（すべてパス）**
 
 ### 🔲 未実装・要検討
 
-1. **テスト** - 各ツールのユニットテスト
-2. **進捗管理のSheets連携強化** - get_progress, update_progressのSheets読み書き
-3. **RAG/Memoryサーバのモック** - ローカルテスト用
-4. **pyproject.tomlのエントリポイント確認** - `spirrow-prismind` コマンド
+1. **Claude Desktop統合テスト** - 実環境での動作確認
 
 ## アーキテクチャ
 
@@ -85,7 +97,7 @@ level = "INFO"
 default_user = "default"
 ```
 
-## MCPツール一覧（11個）
+## MCPツール一覧（17個）
 
 | ツール名 | 説明 |
 |----------|------|
@@ -104,6 +116,9 @@ default_user = "default"
 | `sync_catalog` | 目録同期 |
 | `add_knowledge` | 知見登録 |
 | `search_knowledge` | 知見検索 |
+| `get_progress` | 進捗取得（Sheets連携） |
+| `update_task_status` | タスクステータス更新 |
+| `add_task` | タスク追加 |
 
 ## データ構造
 
@@ -123,24 +138,25 @@ default_user = "default"
 
 ## 次のタスク候補
 
-### 1. テスト環境構築
+### 1. テスト実行
 ```bash
 cd "C:\Users\owner\Documents\Unreal Projects\spirrow-prismind"
 pip install -e ".[dev]"
-pytest tests/ -v
+pytest tests/ -v  # 95テストすべてパス
 ```
 
-### 2. RAG/Memoryモックサーバ作成
-テスト用にインメモリで動作するモックを作成
-
-### 3. MCPサーバの動作確認
-```bash
-# サーバ起動テスト
-python -m spirrow_prismind.server
+### 2. Claude Desktop統合テスト
+`claude_desktop_config.json`に追加してテスト：
+```json
+{
+  "mcpServers": {
+    "spirrow-prismind": {
+      "command": "spirrow-prismind",
+      "args": []
+    }
+  }
+}
 ```
-
-### 4. Claude Desktop統合テスト
-`claude_desktop_config.json`に追加してテスト
 
 ## 関連ドキュメント
 
