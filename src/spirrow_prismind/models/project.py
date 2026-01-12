@@ -166,10 +166,12 @@ class SetupProjectResult:
     success: bool
     project_id: str = ""
     name: str = ""
+    spreadsheet_id: str = ""  # Created or provided spreadsheet ID
+    root_folder_id: str = ""  # Created or provided folder ID
     sheets_created: list[str] = field(default_factory=list)
     folders_created: list[str] = field(default_factory=list)
     message: str = ""
-    
+
     # Duplicate/similarity check results
     requires_confirmation: bool = False    # 確認が必要か
     duplicate_id: bool = False             # ID重複（エラー）

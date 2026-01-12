@@ -455,21 +455,113 @@ class GoogleDriveClient:
         folder_names: list[str],
     ) -> dict[str, FileInfo]:
         """Create multiple folders under a parent.
-        
+
         Args:
             root_parent_id: Parent folder ID
             folder_names: List of folder names to create
-            
+
         Returns:
             Dict mapping folder name to FileInfo
-            
+
         Raises:
             HttpError: If the API request fails
         """
         result = {}
-        
+
         for name in folder_names:
             folder_info, _ = self.create_folder_if_not_exists(name, root_parent_id)
             result[name] = folder_info
-        
+
         return result
+
+    def create_spreadsheet(
+        self,
+        name: str,
+        parent_id: Optional[str] = None,
+    ) -> FileInfo:
+        """Create a new Google Spreadsheet.
+
+        Args:
+            name: Spreadsheet name
+            parent_id: Parent folder ID (None for root)
+
+        Returns:
+            FileInfo with the created spreadsheet's details
+
+        Raises:
+            HttpError: If the API request fails
+        """
+        try:
+            file_metadata = {
+                "name": name,
+                "mimeType": MimeType.SPREADSHEET,
+            }
+
+            if parent_id:
+                file_metadata["parents"] = [parent_id]
+
+            spreadsheet = self.service.files().create(
+                body=file_metadata,
+                fields="id, name, mimeType, parents, webViewLink, createdTime, modifiedTime",
+            ).execute()
+
+            logger.info(f"Created spreadsheet '{name}' with ID: {spreadsheet.get('id')}")
+
+            return FileInfo(
+                file_id=spreadsheet.get("id", ""),
+                name=spreadsheet.get("name", name),
+                mime_type=spreadsheet.get("mimeType", MimeType.SPREADSHEET),
+                parents=spreadsheet.get("parents", []),
+                web_view_link=spreadsheet.get("webViewLink", ""),
+                created_time=spreadsheet.get("createdTime", ""),
+                modified_time=spreadsheet.get("modifiedTime", ""),
+            )
+        except HttpError as e:
+            logger.error(f"Failed to create spreadsheet '{name}': {e}")
+            raise
+
+    def create_document(
+        self,
+        name: str,
+        parent_id: Optional[str] = None,
+    ) -> FileInfo:
+        """Create a new Google Document.
+
+        Args:
+            name: Document name
+            parent_id: Parent folder ID (None for root)
+
+        Returns:
+            FileInfo with the created document's details
+
+        Raises:
+            HttpError: If the API request fails
+        """
+        try:
+            file_metadata = {
+                "name": name,
+                "mimeType": MimeType.DOCUMENT,
+            }
+
+            if parent_id:
+                file_metadata["parents"] = [parent_id]
+
+            document = self.service.files().create(
+                body=file_metadata,
+                fields="id, name, mimeType, parents, webViewLink, createdTime, modifiedTime",
+            ).execute()
+
+            logger.info(f"Created document '{name}' with ID: {document.get('id')}")
+
+            return FileInfo(
+                file_id=document.get("id", ""),
+                name=document.get("name", name),
+                mime_type=document.get("mimeType", MimeType.DOCUMENT),
+                parents=document.get("parents", []),
+                web_view_link=document.get("webViewLink", ""),
+                created_time=document.get("createdTime", ""),
+                modified_time=document.get("modifiedTime", ""),
+            )
+        except HttpError as e:
+            logger.error(f"Failed to create document '{name}': {e}")
+            raise

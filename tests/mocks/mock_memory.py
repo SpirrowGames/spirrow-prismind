@@ -27,9 +27,15 @@ class MockMemoryClient(MemoryClient):
         # Don't call super().__init__() to avoid creating httpx client
         self.base_url = base_url
         self.timeout = timeout
+        self._available = True  # Mock is always available
 
         # In-memory storage: key -> MemoryEntry
         self._storage: dict[str, MemoryEntry] = {}
+
+    @property
+    def is_available(self) -> bool:
+        """Mock is always available."""
+        return self._available
 
     def close(self):
         """No-op for mock client."""

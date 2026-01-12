@@ -84,7 +84,7 @@ class CurrentProject:
 
 class MemoryClient:
     """Client for MCP Memory Server operations.
-    
+
     Assumes a simple key-value REST API.
     """
 
@@ -92,16 +92,44 @@ class MemoryClient:
         self,
         base_url: str = "http://localhost:8080",
         timeout: float = 10.0,
+        connect_timeout: float = 3.0,
     ):
         """Initialize the memory client.
-        
+
         Args:
             base_url: Memory server URL
             timeout: Request timeout in seconds
+            connect_timeout: Connection check timeout in seconds
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout)
+        self._available = self._check_connection(connect_timeout)
+
+    def _check_connection(self, timeout: float) -> bool:
+        """Check if the Memory server is available.
+
+        Args:
+            timeout: Connection timeout in seconds
+
+        Returns:
+            True if server is available, False otherwise
+        """
+        try:
+            response = httpx.get(
+                f"{self.base_url}/health",
+                timeout=timeout,
+            )
+            logger.info(f"Memory server connected: {self.base_url}")
+            return True
+        except Exception as e:
+            logger.warning(f"Memory server not available at {self.base_url}: {e}")
+            return False
+
+    @property
+    def is_available(self) -> bool:
+        """Check if the Memory server is available."""
+        return self._available
 
     def close(self):
         """Close the HTTP client."""

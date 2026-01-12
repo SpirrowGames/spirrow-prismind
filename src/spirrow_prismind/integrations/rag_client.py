@@ -38,7 +38,7 @@ class RAGOperationResult:
 
 class RAGClient:
     """Client for RAG server operations.
-    
+
     Assumes a ChromaDB-compatible REST API.
     """
 
@@ -47,18 +47,77 @@ class RAGClient:
         base_url: str = "http://localhost:8000",
         collection_name: str = "prismind",
         timeout: float = 30.0,
+        connect_timeout: float = 3.0,
     ):
         """Initialize the RAG client.
-        
+
         Args:
             base_url: RAG server URL
             collection_name: Default collection name
             timeout: Request timeout in seconds
+            connect_timeout: Connection check timeout in seconds
         """
         self.base_url = base_url.rstrip("/")
         self.collection_name = collection_name
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout)
+        self._available = self._check_connection(connect_timeout)
+
+    def _check_connection(self, timeout: float) -> bool:
+        """Check if the RAG server is available.
+
+        Args:
+            timeout: Connection timeout in seconds
+
+        Returns:
+            True if server is available, False otherwise
+        """
+        try:
+            response = httpx.get(
+                f"{self.base_url}/api/v1/heartbeat",
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                logger.info(f"RAG server connected: {self.base_url}")
+                # Try to verify collection exists
+                self._ensure_collection_exists()
+                return True
+            else:
+                logger.warning(f"RAG server returned status {response.status_code}")
+                return False
+        except Exception as e:
+            logger.warning(f"RAG server not available at {self.base_url}: {e}")
+            return False
+
+    def _ensure_collection_exists(self):
+        """Ensure the default collection exists, create if needed."""
+        try:
+            # Try to get collection info
+            response = self._client.get(
+                f"{self.base_url}/api/v1/collections/{self.collection_name}",
+            )
+            if response.status_code == 200:
+                logger.debug(f"Collection '{self.collection_name}' exists")
+            elif response.status_code == 404:
+                # Try to create the collection
+                logger.info(f"Creating collection '{self.collection_name}'")
+                create_response = self._client.post(
+                    f"{self.base_url}/api/v1/collections",
+                    json={"name": self.collection_name},
+                )
+                if create_response.status_code in (200, 201):
+                    logger.info(f"Created collection '{self.collection_name}'")
+                else:
+                    logger.warning(
+                        f"Failed to create collection: {create_response.status_code} - {create_response.text}"
+                    )
+        except Exception as e:
+            logger.warning(f"Could not verify/create collection: {e}")
+
+    @property
+    def is_available(self) -> bool:
+        """Check if the RAG server is available."""
+        return self._available
 
     def close(self):
         """Close the HTTP client."""
@@ -115,13 +174,13 @@ class RAGClient:
         collection: Optional[str] = None,
     ) -> RAGOperationResult:
         """Add a document to the RAG store.
-        
+
         Args:
             doc_id: Unique document ID
             content: Document content (used for embedding)
             metadata: Additional metadata
             collection: Collection name (uses default if None)
-            
+
         Returns:
             RAGOperationResult
         """
@@ -131,18 +190,34 @@ class RAGClient:
                 "documents": [content],
                 "metadatas": [metadata or {}],
             }
-            
+
             collection_name = collection or self.collection_name
+            logger.debug(f"Adding document to RAG: id={doc_id}, collection={collection_name}")
             self._make_request(
                 "POST",
                 f"/api/v1/collections/{collection_name}/add",
                 json_data=data,
             )
-            
+
             return RAGOperationResult(
                 success=True,
                 doc_id=doc_id,
                 message="Document added successfully",
+            )
+        except httpx.HTTPStatusError as e:
+            # Log detailed error for HTTP status errors
+            response_text = ""
+            try:
+                response_text = e.response.text
+            except Exception:
+                pass
+            logger.error(
+                f"Failed to add document '{doc_id}': HTTP {e.response.status_code} - {response_text}"
+            )
+            return RAGOperationResult(
+                success=False,
+                doc_id=doc_id,
+                message=f"HTTP {e.response.status_code}: {response_text or str(e)}",
             )
         except httpx.HTTPError as e:
             logger.error(f"Failed to add document '{doc_id}': {e}")

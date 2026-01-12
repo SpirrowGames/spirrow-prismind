@@ -29,10 +29,16 @@ class MockRAGClient(RAGClient):
         self.base_url = base_url
         self.collection_name = collection_name
         self.timeout = timeout
+        self._available = True  # Mock is always available
 
         # In-memory storage: collection -> doc_id -> document
         self._storage: dict[str, dict[str, RAGDocument]] = {}
         self._ensure_collection(collection_name)
+
+    @property
+    def is_available(self) -> bool:
+        """Mock is always available."""
+        return self._available
 
     def _ensure_collection(self, collection: str) -> None:
         """Ensure a collection exists."""

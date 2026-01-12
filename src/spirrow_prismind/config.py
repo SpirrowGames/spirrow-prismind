@@ -19,6 +19,7 @@ class GoogleConfig:
     """Google API configuration."""
     credentials_path: str = "credentials.json"
     token_path: str = "token.json"
+    projects_folder_id: str = ""  # Root folder for all projects
 
 
 @dataclass
@@ -99,6 +100,7 @@ class Config:
                     "credentials_path", "credentials.json"
                 ),
                 token_path=data.get("google", {}).get("token_path", "token.json"),
+                projects_folder_id=data.get("google", {}).get("projects_folder_id", ""),
             ),
             services=ServicesConfig(
                 memory_server_url=data.get("services", {}).get(
@@ -186,6 +188,11 @@ class Config:
     def default_user(self) -> str:
         """Get default user."""
         return self.session.default_user
+
+    @property
+    def projects_folder_id(self) -> str:
+        """Get projects root folder ID."""
+        return self.google.projects_folder_id
 
 
 def load_config(config_path: Optional[Path] = None) -> Config:

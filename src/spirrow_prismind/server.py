@@ -115,7 +115,7 @@ TOOLS = [
     # Project Management
     Tool(
         name="setup_project",
-        description="新しいプロジェクトをセットアップします。重複チェックと類似プロジェクト検索を行います。",
+        description="新しいプロジェクトをセットアップします。spreadsheet_idとroot_folder_idを省略すると、config.tomlのprojects_folder_id配下に自動作成します。",
         inputSchema={
             "type": "object",
             "properties": {
@@ -129,11 +129,11 @@ TOOLS = [
                 },
                 "spreadsheet_id": {
                     "type": "string",
-                    "description": "Google Sheets ID",
+                    "description": "Google Sheets ID（省略時は自動作成）",
                 },
                 "root_folder_id": {
                     "type": "string",
-                    "description": "Google Drive ルートフォルダID",
+                    "description": "Google Drive ルートフォルダID（省略時は自動作成）",
                 },
                 "description": {
                     "type": "string",
@@ -155,7 +155,7 @@ TOOLS = [
                     "default": False,
                 },
             },
-            "required": ["project", "name", "spreadsheet_id", "root_folder_id"],
+            "required": ["project", "name"],
         },
     ),
     Tool(
@@ -550,24 +550,47 @@ class PrismindServer:
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return await self._handle_tool_call(name, arguments)
 
-    async def _ensure_initialized(self):
-        """Ensure the server is initialized."""
+    async def _ensure_initialized(self, timeout: float = 30.0):
+        """Ensure the server is initialized.
+
+        Args:
+            timeout: Initialization timeout in seconds
+        """
         if self._initialized:
             return
+
+        import asyncio
+        try:
+            await asyncio.wait_for(self._do_initialization(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error(f"Server initialization timed out after {timeout} seconds")
+            self._initialized = True  # Mark as initialized to prevent retry loops
+            raise RuntimeError(f"Initialization timeout after {timeout}s. Check credentials and server connections.")
+
+    async def _do_initialization(self):
+        """Perform actual initialization."""
         
         # Load config
         config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
         self.config = load_config(Path(config_path))
         
-        # Initialize clients
+        # Initialize clients (they will check connectivity and mark themselves as unavailable if needed)
         self._rag_client = RAGClient(
             base_url=self.config.rag_url,
             collection_name=self.config.rag_collection,
+            connect_timeout=3.0,
         )
-        
+
         self._memory_client = MemoryClient(
             base_url=self.config.memory_url,
+            connect_timeout=3.0,
         )
+
+        # Log service availability
+        if not self._rag_client.is_available:
+            logger.warning("RAG server is not available. Knowledge/catalog features will be limited.")
+        if not self._memory_client.is_available:
+            logger.warning("Memory server is not available. Session state persistence will be limited.")
         
         # Google clients require OAuth credentials
         # For now, we'll use a placeholder - actual implementation
@@ -587,6 +610,7 @@ class PrismindServer:
                 sheets_client=self._sheets_client,
                 drive_client=self._drive_client,
                 default_user=self.config.default_user,
+                projects_folder_id=self.config.projects_folder_id,
             )
             
             self._session_tools = SessionTools(
@@ -630,42 +654,67 @@ class PrismindServer:
 
     def _load_google_credentials(self):
         """Load Google OAuth credentials."""
-        credentials_path = os.environ.get(
-            "GOOGLE_CREDENTIALS_PATH",
-            str(Path.home() / ".config" / "prismind" / "credentials.json"),
-        )
+        # Use paths from config.toml, with environment variable override
+        config_dir = Path(os.environ.get("PRISMIND_CONFIG", "config.toml")).parent
+
+        # Resolve credentials path
+        credentials_path = os.environ.get("GOOGLE_CREDENTIALS_PATH")
+        if not credentials_path and self.config:
+            cred_path = Path(self.config.google.credentials_path)
+            if not cred_path.is_absolute():
+                cred_path = config_dir / cred_path
+            credentials_path = str(cred_path)
+        if not credentials_path:
+            credentials_path = str(Path.home() / ".config" / "prismind" / "credentials.json")
+
+        # Resolve token path
+        token_path = os.environ.get("GOOGLE_TOKEN_PATH")
+        if not token_path and self.config:
+            tok_path = Path(self.config.google.token_path)
+            if not tok_path.is_absolute():
+                tok_path = config_dir / tok_path
+            token_path = str(tok_path)
+        if not token_path:
+            token_path = str(Path.home() / ".config" / "prismind" / "token.json")
         
-        token_path = os.environ.get(
-            "GOOGLE_TOKEN_PATH",
-            str(Path.home() / ".config" / "prismind" / "token.json"),
-        )
-        
+        logger.info(f"Looking for credentials at: {credentials_path}")
+        logger.info(f"Looking for token at: {token_path}")
+
         try:
             from google.oauth2.credentials import Credentials
             from google.auth.transport.requests import Request
             from google_auth_oauthlib.flow import InstalledAppFlow
-            
+
             SCOPES = [
                 "https://www.googleapis.com/auth/documents",
                 "https://www.googleapis.com/auth/drive",
                 "https://www.googleapis.com/auth/spreadsheets",
             ]
-            
+
             creds = None
-            
+
             # Load existing token
             if os.path.exists(token_path):
+                logger.info(f"Found existing token at {token_path}")
                 creds = Credentials.from_authorized_user_file(token_path, SCOPES)
             
             # Refresh or get new credentials
             if not creds or not creds.valid:
                 if creds and creds.expired and creds.refresh_token:
+                    logger.info("Refreshing expired token")
                     creds.refresh(Request())
                 elif os.path.exists(credentials_path):
+                    logger.info(f"Found credentials.json at {credentials_path}, starting OAuth flow")
+                    logger.warning(
+                        "OAuth requires browser authentication. "
+                        "If running as MCP server, run 'python -c \"from spirrow_prismind.server import PrismindServer; import asyncio; asyncio.run(PrismindServer()._ensure_initialized())\"' first to authenticate."
+                    )
                     flow = InstalledAppFlow.from_client_secrets_file(
                         credentials_path, SCOPES
                     )
-                    creds = flow.run_local_server(port=0)
+                    # Set timeout for OAuth flow (60 seconds)
+                    creds = flow.run_local_server(port=0, timeout_seconds=60)
+                    logger.info("OAuth flow completed successfully")
                 else:
                     logger.warning(
                         f"Google credentials not found at {credentials_path}. "
@@ -704,7 +753,23 @@ class PrismindServer:
 
     async def _dispatch_tool(self, name: str, args: dict) -> dict:
         """Dispatch tool call to appropriate handler."""
-        
+
+        # Check if required tools are initialized
+        google_required_tools = [
+            "start_session", "end_session", "save_session",
+            "setup_project", "switch_project", "list_projects",
+            "update_project", "delete_project",
+            "get_document", "create_document", "update_document",
+            "search_catalog", "sync_catalog",
+            "get_progress", "update_task_status", "add_task",
+        ]
+
+        if name in google_required_tools and not self._project_tools:
+            return {
+                "success": False,
+                "error": "Google認証が完了していません。token.jsonが存在するか確認し、サーバーを再起動してください。",
+            }
+
         # Session Management
         if name == "start_session":
             result = self._session_tools.start_session(
@@ -759,8 +824,8 @@ class PrismindServer:
             result = self._project_tools.setup_project(
                 project=args["project"],
                 name=args["name"],
-                spreadsheet_id=args["spreadsheet_id"],
-                root_folder_id=args["root_folder_id"],
+                spreadsheet_id=args.get("spreadsheet_id"),
+                root_folder_id=args.get("root_folder_id"),
                 description=args.get("description", ""),
                 create_sheets=args.get("create_sheets", True),
                 create_folders=args.get("create_folders", True),
@@ -770,6 +835,8 @@ class PrismindServer:
                 "success": result.success,
                 "project_id": result.project_id,
                 "name": result.name,
+                "spreadsheet_id": result.spreadsheet_id,
+                "root_folder_id": result.root_folder_id,
                 "sheets_created": result.sheets_created,
                 "folders_created": result.folders_created,
                 "requires_confirmation": result.requires_confirmation,
