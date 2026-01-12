@@ -1,0 +1,30 @@
+# Spirrow-Prismind Configuration
+# Copy this file to config.toml and customize
+
+[google]
+# Path to Google OAuth credentials file
+credentials_path = "credentials.json"
+# Path to store OAuth token
+token_path = "token.json"
+
+[services]
+# MCP Memory Server URL
+memory_server_url = "http://localhost:8080"
+# RAG Server URL (ChromaDB compatible)
+rag_server_url = "http://localhost:8000"
+# RAG collection name
+rag_collection = "prismind"
+
+[log]
+# Log level: DEBUG, INFO, WARNING, ERROR
+level = "INFO"
+# Log file (empty = stdout)
+file = ""
+# Log format: text, json
+format = "text"
+
+[session]
+# Auto-save interval in minutes
+auto_save_interval = 20
+# Default user ID
+default_user = "default"

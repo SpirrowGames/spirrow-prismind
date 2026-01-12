@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spirrow-prismind"
+version = "0.1.0"
+description = "MCP server that integrates knowledge from multiple sources and provides context-aware information"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "SpirrowGames" }
+]
+keywords = ["mcp", "knowledge-management", "context", "ai"]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-httplib2>=0.1.0",
+    "google-auth-oauthlib>=1.0.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "tomli>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+spirrow-prismind = "spirrow_prismind.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spirrow_prismind"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
