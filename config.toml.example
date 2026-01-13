@@ -6,7 +6,7 @@
 credentials_path = "credentials.json"
 # Path to store OAuth token
 token_path = "token.json"
-# Root folder ID for all projects (Google Drive folder where projects are created)
+# Root folder ID for all projects (e.g., "Projects" folder in Google Drive)
 projects_folder_id = ""
 
 [services]
