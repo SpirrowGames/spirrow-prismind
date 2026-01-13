@@ -22,24 +22,33 @@ class GoogleSheetsClient:
 
     def __init__(
         self,
+        credentials: Optional[Credentials] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
     ):
         """Initialize the Google Sheets client.
 
         Args:
-            credentials_path: Path to credentials.json file
-            token_path: Path to store/load token.json
+            credentials: Pre-loaded Google credentials object
+            credentials_path: Path to credentials.json file (used if credentials not provided)
+            token_path: Path to store/load token.json (used if credentials not provided)
         """
+        self._creds = credentials
         self.credentials_path = credentials_path or os.getenv(
             "GOOGLE_CREDENTIALS_PATH", "credentials.json"
         )
         self.token_path = token_path or os.getenv("GOOGLE_TOKEN_PATH", "token.json")
         self._service = None
-        self._creds = None
 
     def _get_credentials(self) -> Credentials:
         """Get or refresh Google API credentials."""
+        # If credentials were provided at init, use them
+        if self._creds is not None:
+            # Refresh if needed
+            if not self._creds.valid and self._creds.expired and self._creds.refresh_token:
+                self._creds.refresh(Request())
+            return self._creds
+
         creds = None
 
         # Load existing token

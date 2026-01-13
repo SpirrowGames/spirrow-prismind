@@ -1,8 +1,11 @@
 """Project management tools for Spirrow-Prismind."""
 
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from ..integrations import (
@@ -32,7 +35,8 @@ logger = logging.getLogger(__name__)
 class ProjectTools:
     """Tools for managing projects."""
 
-    # In-memory fallback storage when RAG/Memory are unavailable
+    # File-based fallback storage when RAG/Memory are unavailable
+    _fallback_file: Optional[Path] = None
     _fallback_projects: dict[str, dict] = {}
     _fallback_current_project: dict[str, str] = {}  # user -> project_id
 
@@ -62,11 +66,52 @@ class ProjectTools:
         self.user_name = user_name
         self.projects_folder_id = projects_folder_id
 
+        # Initialize fallback storage file path
+        self._init_fallback_storage()
+
         # Log service availability
         if not self.rag.is_available:
-            logger.warning("RAG unavailable - using in-memory project storage (not persistent)")
+            logger.warning(f"RAG unavailable - using file-based fallback: {self._fallback_file}")
         if not self.memory.is_available:
-            logger.warning("Memory unavailable - using in-memory current project (not persistent)")
+            logger.warning("Memory unavailable - using file-based fallback for current project")
+
+    def _init_fallback_storage(self):
+        """Initialize file-based fallback storage."""
+        # Determine fallback file location
+        config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+        config_dir = Path(config_path).parent
+        self._fallback_file = config_dir / ".prismind_projects.json"
+
+        # Load existing data if available
+        self._load_fallback_data()
+
+    def _load_fallback_data(self):
+        """Load fallback data from file."""
+        if self._fallback_file and self._fallback_file.exists():
+            try:
+                with open(self._fallback_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    ProjectTools._fallback_projects = data.get("projects", {})
+                    ProjectTools._fallback_current_project = data.get("current_project", {})
+                    logger.info(f"Loaded {len(ProjectTools._fallback_projects)} projects from fallback storage")
+            except Exception as e:
+                logger.error(f"Failed to load fallback storage: {e}")
+                ProjectTools._fallback_projects = {}
+                ProjectTools._fallback_current_project = {}
+
+    def _save_fallback_data(self):
+        """Save fallback data to file."""
+        if self._fallback_file:
+            try:
+                data = {
+                    "projects": ProjectTools._fallback_projects,
+                    "current_project": ProjectTools._fallback_current_project,
+                }
+                with open(self._fallback_file, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                logger.debug(f"Saved fallback data to {self._fallback_file}")
+            except Exception as e:
+                logger.error(f"Failed to save fallback storage: {e}")
 
     # ===== Fallback Storage Helpers =====
 
@@ -75,7 +120,7 @@ class ProjectTools:
         if self.rag.is_available:
             return self.rag.get_project_config(project)
         else:
-            data = self._fallback_projects.get(project)
+            data = ProjectTools._fallback_projects.get(project)
             if data:
                 return RAGDocument(
                     doc_id=f"project:{project}",
@@ -112,14 +157,15 @@ class ProjectTools:
                 logger.error(f"RAG save exception for project '{project_id}': {e}")
                 return False, str(e)
         else:
-            self._fallback_projects[project_id] = {
+            ProjectTools._fallback_projects[project_id] = {
                 "project_id": project_id,
                 "name": name,
                 "description": description,
                 "updated_at": datetime.now().isoformat(),
                 **config_data,
             }
-            logger.info(f"Project '{project_id}' saved to in-memory fallback storage")
+            self._save_fallback_data()
+            logger.info(f"Project '{project_id}' saved to file-based fallback storage")
             return True, ""
 
     def _list_projects_with_fallback(self) -> list[RAGDocument]:
@@ -128,7 +174,7 @@ class ProjectTools:
             return self.rag.list_projects()
         else:
             docs = []
-            for project_id, data in self._fallback_projects.items():
+            for project_id, data in ProjectTools._fallback_projects.items():
                 docs.append(RAGDocument(
                     doc_id=f"project:{project_id}",
                     content=f"{data.get('name', '')} - {data.get('description', '')}",
@@ -142,8 +188,9 @@ class ProjectTools:
             result = self.rag.delete_project_config(project)
             return result.success
         else:
-            if project in self._fallback_projects:
-                del self._fallback_projects[project]
+            if project in ProjectTools._fallback_projects:
+                del ProjectTools._fallback_projects[project]
+                self._save_fallback_data()
                 return True
             return False
 
@@ -153,7 +200,7 @@ class ProjectTools:
             current = self.memory.get_current_project(user)
             return current.project_id if current else None
         else:
-            return self._fallback_current_project.get(user)
+            return ProjectTools._fallback_current_project.get(user)
 
     def _set_current_project_with_fallback(self, user: str, project_id: str) -> bool:
         """Set current project in Memory or fallback storage."""
@@ -161,7 +208,8 @@ class ProjectTools:
             result = self.memory.set_current_project(user, project_id)
             return result.success
         else:
-            self._fallback_current_project[user] = project_id
+            ProjectTools._fallback_current_project[user] = project_id
+            self._save_fallback_data()
             return True
 
     # ===== Main Methods =====

@@ -1250,11 +1250,11 @@ class PrismindServer:
 
 def main():
     """Entry point."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-    
+    # Load config first to setup logging correctly
+    config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+    config = load_config(Path(config_path))
+    config.setup_logging()
+
     server = PrismindServer()
     asyncio.run(server.run())
 
