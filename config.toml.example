@@ -26,7 +26,7 @@ file = ""
 format = "text"
 
 [session]
-# Auto-save interval in minutes
+# Auto-save interval (number of messages)
 auto_save_interval = 20
 # User name (shared across multiple PCs for session state identification)
 user_name = ""

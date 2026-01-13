@@ -98,7 +98,7 @@ SETTINGS_REGISTRY: dict[str, dict[str, Any]] = {
         "required": False,
         "sensitive": False,
         "default": 20,
-        "description_ja": "自動保存間隔（分）",
+        "description_ja": "自動保存間隔（メッセージ数）",
         "benefit_ja": "セッションの自動保存頻度を調整",
         "validator": "positive_int",
     },
