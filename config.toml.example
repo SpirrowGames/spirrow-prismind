@@ -6,6 +6,8 @@
 credentials_path = "credentials.json"
 # Path to store OAuth token
 token_path = "token.json"
+# Root folder ID for all projects (Google Drive folder where projects are created)
+projects_folder_id = ""
 
 [services]
 # MCP Memory Server URL
