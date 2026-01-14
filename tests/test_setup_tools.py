@@ -185,7 +185,7 @@ memory_server_url = "http://localhost:8080"
         assert result.success is True
         assert result.all_required_available is False
         assert all(not s.available for s in result.services)
-        assert "インメモリモード" in result.message
+        assert "ローカルストレージモード" in result.message
 
     @patch("spirrow_prismind.tools.setup_tools.httpx.get")
     def test_check_services_partial_availability(self, mock_get, tmp_path):

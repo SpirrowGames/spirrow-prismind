@@ -69,6 +69,15 @@ SETTINGS_REGISTRY: dict[str, dict[str, Any]] = {
         "benefit_ja": "セッション状態の永続化、再起動後も状態を維持",
         "validator": "url",
     },
+    "services.memory_server_type": {
+        "required": False,
+        "sensitive": False,
+        "default": "rest",
+        "description_ja": "Memory Serverプロトコル（rest: REST API / mcp: MCP over SSE）",
+        "benefit_ja": "MCP対応サーバーを使用する場合は 'mcp' を指定",
+        "validator": "choice",
+        "allowed_values": ["rest", "mcp"],
+    },
     "services.rag_server_url": {
         "required": False,
         "sensitive": False,
@@ -205,6 +214,11 @@ class SetupTools:
         elif validator == "log_level":
             allowed = setting_info.get("allowed_values", [])
             if value and value.upper() not in allowed:
+                errors.append(f"'{key}' は {allowed} のいずれかである必要があります")
+
+        elif validator == "choice":
+            allowed = setting_info.get("allowed_values", [])
+            if value and value not in allowed:
                 errors.append(f"'{key}' は {allowed} のいずれかである必要があります")
 
         elif validator == "positive_int":
@@ -373,7 +387,11 @@ class SetupTools:
         if not memory_url:
             memory_url = SETTINGS_REGISTRY["services.memory_server_url"]["default"]
 
-        memory_status = self._check_memory_service(memory_url, timeout)
+        memory_type = self._get_nested_value(config_data, "services.memory_server_type")
+        if not memory_type:
+            memory_type = SETTINGS_REGISTRY["services.memory_server_type"]["default"]
+
+        memory_status = self._check_memory_service(memory_url, memory_type, timeout)
         services.append(memory_status)
 
         # Determine overall status
@@ -383,11 +401,17 @@ class SetupTools:
         if all_available:
             message = "全てのサービスが利用可能です。"
         elif available_count == 0:
-            message = "全てのサービスが利用不可です。インメモリモードで動作します。"
+            message = (
+                "全てのサービスが利用不可です。ローカルストレージモードで動作します。"
+                "（RAG/Memoryサーバーはオプショナルです）"
+            )
         else:
             available_names = [s.name for s in services if s.available]
             unavailable_names = [s.name for s in services if not s.available]
-            message = f"利用可能: {', '.join(available_names)}。利用不可: {', '.join(unavailable_names)}"
+            message = (
+                f"利用可能: {', '.join(available_names)}。"
+                f"利用不可: {', '.join(unavailable_names)}（オプショナル - ローカルストレージで代替）"
+            )
 
         return CheckServicesResult(
             success=True,
@@ -439,45 +463,87 @@ class SetupTools:
                 message=f"エラー: {e}",
             )
 
-    def _check_memory_service(self, url: str, timeout: float) -> ServiceStatus:
-        """Check Memory server availability."""
+    def _check_memory_service(
+        self, url: str, protocol: str, timeout: float
+    ) -> ServiceStatus:
+        """Check Memory server availability.
+
+        Args:
+            url: Memory server URL
+            protocol: Protocol type ("rest" or "mcp")
+            timeout: Connection timeout
+        """
+        # Determine endpoint based on protocol
+        if protocol == "mcp":
+            check_url = f"{url.rstrip('/')}/sse"
+            protocol_label = "MCP/SSE"
+        else:
+            check_url = f"{url.rstrip('/')}/health"
+            protocol_label = "REST"
+
         try:
-            response = httpx.get(
-                f"{url.rstrip('/')}/health",
-                timeout=timeout,
-            )
-            # Accept any 2xx response
-            if 200 <= response.status_code < 300:
-                return ServiceStatus(
-                    name="Memory Server",
-                    available=True,
-                    url=url,
-                    message="接続成功。セッション状態を永続化できます。",
-                )
+            if protocol == "mcp":
+                # SSE is a streaming endpoint that never completes
+                # Use stream() to check headers without waiting for body
+                with httpx.stream("GET", check_url, timeout=timeout) as response:
+                    # Check if we get a valid SSE response
+                    content_type = response.headers.get("content-type", "")
+                    if response.status_code == 200 and "text/event-stream" in content_type:
+                        return ServiceStatus(
+                            name=f"Memory Server ({protocol_label})",
+                            available=True,
+                            url=url,
+                            message="接続成功。MCP/SSEでセッション状態を永続化できます。",
+                        )
+                    elif response.status_code == 200:
+                        # 200 but not SSE - still available
+                        return ServiceStatus(
+                            name=f"Memory Server ({protocol_label})",
+                            available=True,
+                            url=url,
+                            message="接続成功。",
+                        )
+                    else:
+                        return ServiceStatus(
+                            name=f"Memory Server ({protocol_label})",
+                            available=False,
+                            url=url,
+                            message=f"サーバーがステータス {response.status_code} を返しました",
+                        )
             else:
-                return ServiceStatus(
-                    name="Memory Server",
-                    available=False,
-                    url=url,
-                    message=f"サーバーがステータス {response.status_code} を返しました",
-                )
+                # REST protocol - normal GET request
+                response = httpx.get(check_url, timeout=timeout)
+                if 200 <= response.status_code < 300:
+                    return ServiceStatus(
+                        name=f"Memory Server ({protocol_label})",
+                        available=True,
+                        url=url,
+                        message="接続成功。セッション状態を永続化できます。",
+                    )
+                else:
+                    return ServiceStatus(
+                        name=f"Memory Server ({protocol_label})",
+                        available=False,
+                        url=url,
+                        message=f"サーバーがステータス {response.status_code} を返しました",
+                    )
         except httpx.ConnectError:
             return ServiceStatus(
-                name="Memory Server",
+                name=f"Memory Server ({protocol_label})",
                 available=False,
                 url=url,
                 message="接続できませんでした。サーバーが起動していない可能性があります。",
             )
         except httpx.TimeoutException:
             return ServiceStatus(
-                name="Memory Server",
+                name=f"Memory Server ({protocol_label})",
                 available=False,
                 url=url,
                 message="接続がタイムアウトしました。",
             )
         except Exception as e:
             return ServiceStatus(
-                name="Memory Server",
+                name=f"Memory Server ({protocol_label})",
                 available=False,
                 url=url,
                 message=f"エラー: {e}",

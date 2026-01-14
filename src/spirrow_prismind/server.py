@@ -621,13 +621,21 @@ class PrismindServer:
         self._memory_client = MemoryClient(
             base_url=self.config.memory_url,
             connect_timeout=3.0,
+            protocol=self.config.memory_type,
         )
 
-        # Log service availability
+        # Log service availability (RAG/Memory are optional)
         if not self._rag_client.is_available:
-            logger.warning("RAG server is not available. Knowledge/catalog features will be limited.")
+            logger.info(
+                "RAG server is not available (optional). "
+                "Project data will be stored locally. "
+                "Knowledge/catalog search features will be limited."
+            )
         if not self._memory_client.is_available:
-            logger.warning("Memory server is not available. Session state persistence will be limited.")
+            logger.info(
+                "Memory server is not available (optional). "
+                "Session state will use local file storage."
+            )
         
         # Google clients require OAuth credentials
         # For now, we'll use a placeholder - actual implementation

@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 try:
     import tomllib
@@ -26,6 +26,7 @@ class GoogleConfig:
 class ServicesConfig:
     """External services configuration."""
     memory_server_url: str = "http://localhost:8080"
+    memory_server_type: Literal["rest", "mcp"] = "rest"  # Protocol: REST API or MCP/SSE
     rag_server_url: str = "http://localhost:8000"
     rag_collection: str = "prismind"
 
@@ -106,6 +107,9 @@ class Config:
                 memory_server_url=data.get("services", {}).get(
                     "memory_server_url", "http://localhost:8080"
                 ),
+                memory_server_type=data.get("services", {}).get(
+                    "memory_server_type", "rest"
+                ),
                 rag_server_url=data.get("services", {}).get(
                     "rag_server_url", "http://localhost:8000"
                 ),
@@ -140,6 +144,9 @@ class Config:
 
         if self.session.auto_save_interval < 1:
             errors.append("auto_save_interval must be at least 1")
+
+        if self.services.memory_server_type not in ["rest", "mcp"]:
+            errors.append(f"Invalid memory_server_type: {self.services.memory_server_type} (must be 'rest' or 'mcp')")
 
         return errors
 
@@ -183,6 +190,11 @@ class Config:
     def memory_url(self) -> str:
         """Get Memory server URL."""
         return self.services.memory_server_url
+
+    @property
+    def memory_type(self) -> Literal["rest", "mcp"]:
+        """Get Memory server protocol type."""
+        return self.services.memory_server_type
 
     @property
     def user_name(self) -> str:

@@ -10,8 +10,10 @@ token_path = "token.json"
 projects_folder_id = ""
 
 [services]
-# MCP Memory Server URL
+# Memory Server URL
 memory_server_url = "http://localhost:8080"
+# Memory Server protocol: "rest" (HTTP REST API) or "mcp" (MCP over SSE)
+memory_server_type = "rest"
 # RAG Server URL (ChromaDB compatible)
 rag_server_url = "http://localhost:8000"
 # RAG collection name

@@ -69,11 +69,11 @@ class ProjectTools:
         # Initialize fallback storage file path
         self._init_fallback_storage()
 
-        # Log service availability
+        # Log service availability (RAG/Memory are optional)
         if not self.rag.is_available:
-            logger.warning(f"RAG unavailable - using file-based fallback: {self._fallback_file}")
+            logger.info(f"RAG server unavailable (optional) - using local storage: {self._fallback_file}")
         if not self.memory.is_available:
-            logger.warning("Memory unavailable - using file-based fallback for current project")
+            logger.info("Memory server unavailable (optional) - using local storage for current project")
 
     def _init_fallback_storage(self):
         """Initialize file-based fallback storage."""
@@ -116,18 +116,29 @@ class ProjectTools:
     # ===== Fallback Storage Helpers =====
 
     def _get_project_config_with_fallback(self, project: str) -> Optional[RAGDocument]:
-        """Get project config from RAG or fallback storage."""
+        """Get project config from RAG or fallback storage.
+
+        RAG is optional - if RAG fails, falls back to file storage.
+        """
+        # Try RAG first if available
         if self.rag.is_available:
-            return self.rag.get_project_config(project)
-        else:
-            data = ProjectTools._fallback_projects.get(project)
-            if data:
-                return RAGDocument(
-                    doc_id=f"project:{project}",
-                    content=f"{data.get('name', '')} - {data.get('description', '')}",
-                    metadata=data,
-                )
-            return None
+            try:
+                result = self.rag.get_project_config(project)
+                if result:
+                    return result
+                # Not found in RAG, try fallback
+            except Exception as e:
+                logger.warning(f"RAG get failed for project '{project}': {e}. Trying fallback storage.")
+
+        # Fallback to file storage
+        data = ProjectTools._fallback_projects.get(project)
+        if data:
+            return RAGDocument(
+                doc_id=f"project:{project}",
+                content=f"{data.get('name', '')} - {data.get('description', '')}",
+                metadata=data,
+            )
+        return None
 
     def _save_project_config_with_fallback(
         self,
@@ -138,9 +149,15 @@ class ProjectTools:
     ) -> tuple[bool, str]:
         """Save project config to RAG or fallback storage.
 
+        RAG is optional - if RAG fails for any reason, falls back to file storage.
+
         Returns:
-            Tuple of (success, error_message). error_message is empty on success.
+            Tuple of (success, warning_message). warning_message may contain
+            info about fallback usage even on success.
         """
+        rag_error: Optional[str] = None
+
+        # Try RAG first if available
         if self.rag.is_available:
             try:
                 result = self.rag.save_project_config(
@@ -149,68 +166,134 @@ class ProjectTools:
                     description=description,
                     config_data=config_data,
                 )
-                if not result.success:
-                    logger.error(f"RAG save failed for project '{project_id}': {result.message}")
-                    return False, result.message
-                return True, ""
+                if result.success:
+                    return True, ""
+                else:
+                    rag_error = result.message
+                    logger.warning(
+                        f"RAG save failed for project '{project_id}': {result.message}. "
+                        "Falling back to file storage."
+                    )
             except Exception as e:
-                logger.error(f"RAG save exception for project '{project_id}': {e}")
-                return False, str(e)
-        else:
-            ProjectTools._fallback_projects[project_id] = {
-                "project_id": project_id,
-                "name": name,
-                "description": description,
-                "updated_at": datetime.now().isoformat(),
-                **config_data,
-            }
-            self._save_fallback_data()
-            logger.info(f"Project '{project_id}' saved to file-based fallback storage")
-            return True, ""
+                rag_error = str(e)
+                logger.warning(
+                    f"RAG save exception for project '{project_id}': {e}. "
+                    "Falling back to file storage."
+                )
+
+        # Fallback to file storage (either RAG unavailable or RAG failed)
+        ProjectTools._fallback_projects[project_id] = {
+            "project_id": project_id,
+            "name": name,
+            "description": description,
+            "updated_at": datetime.now().isoformat(),
+            **config_data,
+        }
+        self._save_fallback_data()
+        logger.info(f"Project '{project_id}' saved to file-based fallback storage")
+
+        # Return success with warning if RAG failed
+        if rag_error:
+            return True, f"RAGサーバーへの保存に失敗しましたが、ローカルストレージに保存しました（RAGエラー: {rag_error}）"
+        elif not self.rag.is_available:
+            return True, "RAGサーバーが利用できないため、ローカルストレージに保存しました"
+        return True, ""
 
     def _list_projects_with_fallback(self) -> list[RAGDocument]:
-        """List projects from RAG or fallback storage."""
+        """List projects from RAG and fallback storage.
+
+        Merges results from both sources, preferring RAG data when available.
+        RAG is optional - if RAG fails, returns only fallback storage projects.
+        """
+        docs: list[RAGDocument] = []
+        seen_ids: set[str] = set()
+
+        # Try RAG first if available
         if self.rag.is_available:
-            return self.rag.list_projects()
-        else:
-            docs = []
-            for project_id, data in ProjectTools._fallback_projects.items():
+            try:
+                rag_docs = self.rag.list_projects()
+                for doc in rag_docs:
+                    project_id = doc.metadata.get("project_id", "")
+                    if project_id:
+                        seen_ids.add(project_id)
+                    docs.append(doc)
+            except Exception as e:
+                logger.warning(f"RAG list_projects failed: {e}. Using fallback storage only.")
+
+        # Add projects from fallback that aren't in RAG
+        for project_id, data in ProjectTools._fallback_projects.items():
+            if project_id not in seen_ids:
                 docs.append(RAGDocument(
                     doc_id=f"project:{project_id}",
                     content=f"{data.get('name', '')} - {data.get('description', '')}",
                     metadata=data,
                 ))
-            return docs
+
+        return docs
 
     def _delete_project_config_with_fallback(self, project: str) -> bool:
-        """Delete project config from RAG or fallback storage."""
+        """Delete project config from RAG and fallback storage.
+
+        Attempts to delete from both sources. RAG errors are logged but don't prevent
+        fallback deletion.
+        """
+        deleted = False
+
+        # Try RAG if available
         if self.rag.is_available:
-            result = self.rag.delete_project_config(project)
-            return result.success
-        else:
-            if project in ProjectTools._fallback_projects:
-                del ProjectTools._fallback_projects[project]
-                self._save_fallback_data()
-                return True
-            return False
+            try:
+                result = self.rag.delete_project_config(project)
+                if result.success:
+                    deleted = True
+            except Exception as e:
+                logger.warning(f"RAG delete failed for project '{project}': {e}")
+
+        # Also delete from fallback storage
+        if project in ProjectTools._fallback_projects:
+            del ProjectTools._fallback_projects[project]
+            self._save_fallback_data()
+            deleted = True
+
+        return deleted
 
     def _get_current_project_with_fallback(self, user: str) -> Optional[str]:
-        """Get current project from Memory or fallback storage."""
+        """Get current project from Memory or fallback storage.
+
+        Memory server is optional - falls back to file storage on errors.
+        """
+        # Try Memory server first if available
         if self.memory.is_available:
-            current = self.memory.get_current_project(user)
-            return current.project_id if current else None
-        else:
-            return ProjectTools._fallback_current_project.get(user)
+            try:
+                current = self.memory.get_current_project(user)
+                if current and current.project_id:
+                    return current.project_id
+            except Exception as e:
+                logger.warning(f"Memory get_current_project failed: {e}. Trying fallback storage.")
+
+        # Fallback to file storage
+        return ProjectTools._fallback_current_project.get(user)
 
     def _set_current_project_with_fallback(self, user: str, project_id: str) -> bool:
-        """Set current project in Memory or fallback storage."""
+        """Set current project in Memory and fallback storage.
+
+        Memory server is optional - always saves to fallback as backup.
+        """
+        success = True
+
+        # Try Memory server if available
         if self.memory.is_available:
-            result = self.memory.set_current_project(user, project_id)
-            return result.success
-        else:
-            ProjectTools._fallback_current_project[user] = project_id
-            self._save_fallback_data()
-            return True
+            try:
+                result = self.memory.set_current_project(user, project_id)
+                if not result.success:
+                    logger.warning(f"Memory set_current_project failed: {result.message}")
+            except Exception as e:
+                logger.warning(f"Memory set_current_project exception: {e}")
+
+        # Always save to fallback storage as backup
+        ProjectTools._fallback_current_project[user] = project_id
+        self._save_fallback_data()
+
+        return success
 
     # ===== Main Methods =====
 
@@ -381,7 +464,7 @@ class ProjectTools:
             "created_at": datetime.now().isoformat(),
         }
 
-        save_success, save_error = self._save_project_config_with_fallback(
+        save_success, save_warning = self._save_project_config_with_fallback(
             project_id=project,
             name=name,
             description=description,
@@ -389,10 +472,11 @@ class ProjectTools:
         )
 
         if not save_success:
+            # This shouldn't happen with the new fallback logic, but keep for safety
             return SetupProjectResult(
                 success=False,
                 project_id=project,
-                message=f"プロジェクト設定の保存に失敗しました: {save_error}",
+                message=f"プロジェクト設定の保存に失敗しました: {save_warning}",
             )
         
         sheets_created: list[str] = []
@@ -480,6 +564,8 @@ class ProjectTools:
             msg_parts.append(f"フォルダを自動作成しました。")
         if auto_created_spreadsheet:
             msg_parts.append(f"スプレッドシートを自動作成しました。")
+        if save_warning:
+            msg_parts.append(f"⚠️ {save_warning}")
 
         return SetupProjectResult(
             success=True,
@@ -583,7 +669,7 @@ class ProjectTools:
         # Add note if using fallback storage
         storage_note = ""
         if not self.rag.is_available:
-            storage_note = " (インメモリモード - 再起動で消えます)"
+            storage_note = " (ローカルストレージ使用中 - 類似プロジェクト検索機能は制限されます)"
 
         return ListProjectsResult(
             success=True,
@@ -660,7 +746,7 @@ class ProjectTools:
             "created_at": meta.get("created_at", datetime.now().isoformat()),
         }
 
-        success, save_error = self._save_project_config_with_fallback(
+        success, save_warning = self._save_project_config_with_fallback(
             project_id=project,
             name=new_name,
             description=new_description,
@@ -668,17 +754,22 @@ class ProjectTools:
         )
 
         if not success:
+            # This shouldn't happen with the new fallback logic, but keep for safety
             return UpdateProjectResult(
                 success=False,
                 project_id=project,
-                message=f"プロジェクト設定の更新に失敗しました: {save_error}",
+                message=f"プロジェクト設定の更新に失敗しました: {save_warning}",
             )
+
+        msg = f"プロジェクト '{new_name}' を更新しました: {', '.join(updated_fields)}"
+        if save_warning:
+            msg += f" ⚠️ {save_warning}"
 
         return UpdateProjectResult(
             success=True,
             project_id=project,
             updated_fields=updated_fields,
-            message=f"プロジェクト '{new_name}' を更新しました: {', '.join(updated_fields)}",
+            message=msg,
         )
 
     def delete_project(

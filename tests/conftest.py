@@ -51,13 +51,20 @@ def project_tools(mock_rag_client, mock_memory_client, mock_sheets_client, mock_
     """Create ProjectTools with mock clients."""
     from spirrow_prismind.tools.project_tools import ProjectTools
 
-    return ProjectTools(
+    tools = ProjectTools(
         rag_client=mock_rag_client,
         memory_client=mock_memory_client,
         sheets_client=mock_sheets_client,
         drive_client=mock_drive_client,
         user_name="test_user",
     )
+
+    # Reset class-level fallback storage AFTER instance creation
+    # to clear any data loaded from .prismind_projects.json
+    ProjectTools._fallback_projects = {}
+    ProjectTools._fallback_current_project = {}
+
+    return tools
 
 
 @pytest.fixture
