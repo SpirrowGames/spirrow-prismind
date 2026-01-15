@@ -1,5 +1,6 @@
 """Project configuration model (stored in RAG)."""
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -96,11 +97,20 @@ class ProjectConfig:
     def from_rag_document(cls, doc: dict) -> "ProjectConfig":
         """Create from RAG document."""
         metadata = doc.get("metadata", {})
-        
-        sheets_data = metadata.get("sheets", {})
-        drive_data = metadata.get("drive", {})
-        docs_data = metadata.get("docs", {})
-        options_data = metadata.get("options", {})
+
+        def parse_json_field(value, default):
+            """Parse JSON string or return value as-is if already parsed."""
+            if isinstance(value, str):
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    return default
+            return value if value is not None else default
+
+        sheets_data = parse_json_field(metadata.get("sheets"), {})
+        drive_data = parse_json_field(metadata.get("drive"), {})
+        docs_data = parse_json_field(metadata.get("docs"), {})
+        options_data = parse_json_field(metadata.get("options"), {})
         
         created_at = metadata.get("created_at")
         if isinstance(created_at, str):
@@ -137,7 +147,7 @@ class ProjectConfig:
                 auto_sync_catalog=options_data.get("auto_sync_catalog", True),
                 auto_create_folders=options_data.get("auto_create_folders", True),
             ),
-            document_types=metadata.get("document_types", []),
+            document_types=parse_json_field(metadata.get("document_types"), []),
             created_at=created_at,
             updated_at=updated_at,
         )
