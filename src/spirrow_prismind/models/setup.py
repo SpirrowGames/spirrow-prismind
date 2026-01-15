@@ -40,3 +40,57 @@ class ConfigureResult:
     new_value: str = ""
     validation_errors: list[str] = field(default_factory=list)
     message: str = ""
+
+
+@dataclass
+class ServiceConnectionInfo:
+    """Connection info for a single service."""
+
+    name: str
+    url: str
+    protocol: str = ""  # "rest", "mcp", etc.
+    status: str = ""  # "connected", "disconnected", "unknown"
+    latency_ms: Optional[float] = None
+    version: str = ""
+    collection: str = ""  # For RAG
+    last_checked: str = ""
+
+
+@dataclass
+class GoogleConnectionInfo:
+    """Connection info for Google services."""
+
+    authenticated: bool
+    user: str = ""
+    scopes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GetConnectionInfoResult:
+    """Result of get_connection_info tool."""
+
+    success: bool
+    memory_server: Optional[ServiceConnectionInfo] = None
+    rag_server: Optional[ServiceConnectionInfo] = None
+    google: Optional[GoogleConnectionInfo] = None
+    message: str = ""
+
+
+@dataclass
+class ExportServerConfigResult:
+    """Result of export_server_config tool."""
+
+    success: bool
+    config: str = ""  # TOML formatted config (without secrets)
+    message: str = ""
+
+
+@dataclass
+class ImportServerConfigResult:
+    """Result of import_server_config tool."""
+
+    success: bool
+    imported_settings: list[str] = field(default_factory=list)
+    skipped_settings: list[str] = field(default_factory=list)
+    validation_errors: list[str] = field(default_factory=list)
+    message: str = ""

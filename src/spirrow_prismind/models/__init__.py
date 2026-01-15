@@ -2,10 +2,15 @@
 
 from .catalog import CatalogEntry, SearchCatalogResult, SyncCatalogResult
 from .document import (
+    BUILTIN_DOCUMENT_TYPES,
     CreateDocumentResult,
+    DeleteDocumentTypeResult,
     DocReference,
     Document,
     DocumentResult,
+    DocumentType,
+    ListDocumentTypesResult,
+    RegisterDocumentTypeResult,
     UpdateDocumentResult,
 )
 from .knowledge import AddKnowledgeResult, KnowledgeEntry, SearchKnowledgeResult
@@ -31,6 +36,7 @@ from .project import (
     SheetsConfig,
     SimilarProject,
     SwitchProjectResult,
+    SyncProjectsResult,
     UpdateProjectResult,
 )
 from .session import (
@@ -41,7 +47,12 @@ from .session import (
 )
 from .setup import (
     ConfigureResult,
+    ExportServerConfigResult,
+    GetConnectionInfoResult,
     GetSetupStatusResult,
+    GoogleConnectionInfo,
+    ImportServerConfigResult,
+    ServiceConnectionInfo,
     SettingStatus,
 )
 from .summary import (
@@ -60,10 +71,15 @@ __all__ = [
     "SearchCatalogResult",
     "SyncCatalogResult",
     # Document
+    "BUILTIN_DOCUMENT_TYPES",
     "CreateDocumentResult",
+    "DeleteDocumentTypeResult",
     "DocReference",
     "Document",
     "DocumentResult",
+    "DocumentType",
+    "ListDocumentTypesResult",
+    "RegisterDocumentTypeResult",
     "UpdateDocumentResult",
     # Knowledge
     "AddKnowledgeResult",
@@ -90,6 +106,7 @@ __all__ = [
     "SheetsConfig",
     "SimilarProject",
     "SwitchProjectResult",
+    "SyncProjectsResult",
     "UpdateProjectResult",
     # Session
     "EndSessionResult",
@@ -98,7 +115,12 @@ __all__ = [
     "SessionState",
     # Setup
     "ConfigureResult",
+    "ExportServerConfigResult",
+    "GetConnectionInfoResult",
     "GetSetupStatusResult",
+    "GoogleConnectionInfo",
+    "ImportServerConfigResult",
+    "ServiceConnectionInfo",
     "SettingStatus",
     # Summary
     "CheckServicesResult",

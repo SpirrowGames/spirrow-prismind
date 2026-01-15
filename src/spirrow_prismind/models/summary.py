@@ -96,6 +96,11 @@ class ServiceStatus:
     available: bool
     url: str = ""
     message: str = ""
+    # Detailed fields (populated when detailed=True)
+    protocol: str = ""  # "rest" | "mcp"
+    latency_ms: Optional[float] = None
+    version: str = ""
+    last_checked: str = ""
 
 
 @dataclass

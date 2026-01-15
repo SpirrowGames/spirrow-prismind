@@ -23,6 +23,7 @@ from ..models import (
     SetupProjectResult,
     SimilarProject,
     SwitchProjectResult,
+    SyncProjectsResult,
     UpdateProjectResult,
     create_catalog_template,
     create_progress_template,
@@ -873,3 +874,181 @@ class ProjectTools:
         """
         user = user or self.user_name
         return self._get_current_project_with_fallback(user)
+
+    def sync_projects_from_drive(
+        self,
+        dry_run: bool = False,
+    ) -> SyncProjectsResult:
+        """Sync projects from Google Drive to RAG.
+
+        Uses Google Drive (projects_folder_id) as the master source.
+        - Folders in Drive that are not in RAG will be added
+        - Projects in RAG that don't exist in Drive will be removed
+
+        Args:
+            dry_run: If True, only report differences without making changes
+
+        Returns:
+            SyncProjectsResult with added, removed, and unchanged project lists
+        """
+        if not self.projects_folder_id:
+            return SyncProjectsResult(
+                success=False,
+                message="projects_folder_idが設定されていません。config.tomlで設定してください。",
+            )
+
+        errors = []
+
+        # 1. Get folder list from Drive
+        drive_projects: dict[str, dict] = {}
+        try:
+            contents = self.drive.list_folder_contents(self.projects_folder_id)
+            for folder in contents.folders:
+                # Search for spreadsheet in each folder
+                spreadsheet = self._find_project_spreadsheet(folder.file_id)
+                if spreadsheet:
+                    drive_projects[folder.name] = {
+                        "folder_id": folder.file_id,
+                        "spreadsheet_id": spreadsheet.file_id,
+                        "name": folder.name,
+                    }
+                else:
+                    logger.debug(
+                        f"Skipping folder '{folder.name}': no spreadsheet found"
+                    )
+        except Exception as e:
+            return SyncProjectsResult(
+                success=False,
+                errors=[f"Google Drive取得エラー: {e}"],
+                message="Google Driveからフォルダ一覧を取得できませんでした。",
+            )
+
+        # 2. Get existing projects from RAG
+        rag_projects: dict[str, RAGDocument] = {}
+        if self.rag.is_available:
+            try:
+                rag_docs = self.rag.list_projects()
+                for doc in rag_docs:
+                    project_id = doc.metadata.get("project_id", "")
+                    if project_id:
+                        rag_projects[project_id] = doc
+            except Exception as e:
+                errors.append(f"RAG取得警告: {e}")
+
+        # Also include fallback storage
+        for project_id, data in ProjectTools._fallback_projects.items():
+            if project_id not in rag_projects:
+                rag_projects[project_id] = RAGDocument(
+                    doc_id=f"project:{project_id}",
+                    content=data.get("name", ""),
+                    metadata=data,
+                )
+
+        # 3. Calculate differences
+        drive_ids = set(drive_projects.keys())
+        rag_ids = set(rag_projects.keys())
+
+        to_add = sorted(drive_ids - rag_ids)
+        to_remove = sorted(rag_ids - drive_ids)
+        unchanged = sorted(drive_ids & rag_ids)
+
+        if dry_run:
+            # Report only, no changes
+            message_parts = []
+            if to_add:
+                message_parts.append(f"追加予定: {len(to_add)}件 ({', '.join(to_add)})")
+            if to_remove:
+                message_parts.append(f"削除予定: {len(to_remove)}件 ({', '.join(to_remove)})")
+            if unchanged:
+                message_parts.append(f"変更なし: {len(unchanged)}件")
+            if not message_parts:
+                message_parts.append("同期対象がありません")
+
+            return SyncProjectsResult(
+                success=True,
+                added=to_add,
+                removed=to_remove,
+                unchanged=unchanged,
+                errors=errors,
+                message="[Dry Run] " + "; ".join(message_parts),
+            )
+
+        # 4. Add new projects
+        added = []
+        for project_id in to_add:
+            info = drive_projects[project_id]
+            try:
+                success, warning = self._save_project_config_with_fallback(
+                    project_id=project_id,
+                    name=info["name"],
+                    description="",
+                    config_data={
+                        "spreadsheet_id": info["spreadsheet_id"],
+                        "root_folder_id": info["folder_id"],
+                    },
+                )
+                if success:
+                    added.append(project_id)
+                    logger.info(f"Synced project from Drive: {project_id}")
+                else:
+                    errors.append(f"追加失敗 ({project_id}): {warning}")
+            except Exception as e:
+                errors.append(f"追加エラー ({project_id}): {e}")
+
+        # 5. Remove projects not in Drive
+        removed = []
+        for project_id in to_remove:
+            try:
+                # Remove from RAG
+                if self.rag.is_available:
+                    self.rag.delete_project_config(project_id)
+
+                # Remove from fallback storage
+                if project_id in ProjectTools._fallback_projects:
+                    del ProjectTools._fallback_projects[project_id]
+                    self._save_fallback_data()
+
+                removed.append(project_id)
+                logger.info(f"Removed project not in Drive: {project_id}")
+            except Exception as e:
+                errors.append(f"削除エラー ({project_id}): {e}")
+
+        # Build result message
+        message_parts = []
+        if added:
+            message_parts.append(f"追加: {len(added)}件")
+        if removed:
+            message_parts.append(f"削除: {len(removed)}件")
+        if unchanged:
+            message_parts.append(f"変更なし: {len(unchanged)}件")
+        if errors:
+            message_parts.append(f"エラー: {len(errors)}件")
+
+        return SyncProjectsResult(
+            success=True,
+            added=added,
+            removed=removed,
+            unchanged=unchanged,
+            errors=errors,
+            message="; ".join(message_parts) if message_parts else "同期完了",
+        )
+
+    def _find_project_spreadsheet(self, folder_id: str) -> Optional[any]:
+        """Find the project management spreadsheet in a folder.
+
+        Args:
+            folder_id: Google Drive folder ID
+
+        Returns:
+            FileInfo of the spreadsheet if found, None otherwise
+        """
+        try:
+            contents = self.drive.list_folder_contents(folder_id)
+            # Look for a spreadsheet (Google Sheets mime type)
+            for file in contents.files:
+                if file.mime_type == "application/vnd.google-apps.spreadsheet":
+                    return file
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to search folder {folder_id}: {e}")
+            return None

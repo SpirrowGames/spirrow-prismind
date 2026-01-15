@@ -2,7 +2,10 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .document import DocumentType
 
 
 @dataclass
@@ -37,19 +40,20 @@ class ProjectOptions:
 @dataclass
 class ProjectConfig:
     """Project configuration stored in RAG."""
-    
+
     # Required fields
     project_id: str
     name: str
     spreadsheet_id: str
     root_folder_id: str
-    
+
     # Optional fields
     description: str = ""
     sheets: SheetsConfig = field(default_factory=SheetsConfig)
     drive: DriveConfig = field(default_factory=DriveConfig)
     docs: DocsConfig = field(default_factory=DocsConfig)
     options: ProjectOptions = field(default_factory=ProjectOptions)
+    document_types: list[dict] = field(default_factory=list)  # Custom document types
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
@@ -82,6 +86,7 @@ class ProjectConfig:
                     "auto_sync_catalog": self.options.auto_sync_catalog,
                     "auto_create_folders": self.options.auto_create_folders,
                 },
+                "document_types": self.document_types,
                 "created_at": self.created_at.isoformat(),
                 "updated_at": self.updated_at.isoformat(),
             },
@@ -132,6 +137,7 @@ class ProjectConfig:
                 auto_sync_catalog=options_data.get("auto_sync_catalog", True),
                 auto_create_folders=options_data.get("auto_create_folders", True),
             ),
+            document_types=metadata.get("document_types", []),
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -231,4 +237,15 @@ class DeleteProjectResult:
     """Result of deleting a project."""
     success: bool
     project_id: str = ""
+    message: str = ""
+
+
+@dataclass
+class SyncProjectsResult:
+    """Result of syncing projects from Google Drive."""
+    success: bool
+    added: list[str] = field(default_factory=list)  # Added project IDs
+    removed: list[str] = field(default_factory=list)  # Removed project IDs
+    unchanged: list[str] = field(default_factory=list)  # Unchanged project IDs
+    errors: list[str] = field(default_factory=list)  # Error messages
     message: str = ""

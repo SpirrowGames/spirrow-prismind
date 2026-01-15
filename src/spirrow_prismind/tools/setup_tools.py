@@ -17,7 +17,12 @@ import httpx
 from ..models import (
     CheckServicesResult,
     ConfigureResult,
+    ExportServerConfigResult,
+    GetConnectionInfoResult,
     GetSetupStatusResult,
+    GoogleConnectionInfo,
+    ImportServerConfigResult,
+    ServiceConnectionInfo,
     ServiceStatus,
     SettingStatus,
 )
@@ -361,16 +366,22 @@ class SetupTools:
         """Get list of available setting names."""
         return list(SETTINGS_REGISTRY.keys())
 
-    def check_services_status(self, timeout: float = 3.0) -> CheckServicesResult:
+    def check_services_status(
+        self, timeout: float = 3.0, detailed: bool = False
+    ) -> CheckServicesResult:
         """Check the status of RAG and Memory services.
 
         Args:
             timeout: Connection timeout in seconds
+            detailed: If True, include protocol, latency_ms, version, last_checked
 
         Returns:
             CheckServicesResult
         """
+        from datetime import datetime
+
         config_data = self._load_toml()
+        now = datetime.now().isoformat() if detailed else ""
 
         services = []
 
@@ -379,7 +390,7 @@ class SetupTools:
         if not rag_url:
             rag_url = SETTINGS_REGISTRY["services.rag_server_url"]["default"]
 
-        rag_status = self._check_rag_service(rag_url, timeout)
+        rag_status = self._check_rag_service(rag_url, timeout, detailed, now)
         services.append(rag_status)
 
         # Check Memory server
@@ -391,7 +402,9 @@ class SetupTools:
         if not memory_type:
             memory_type = SETTINGS_REGISTRY["services.memory_server_type"]["default"]
 
-        memory_status = self._check_memory_service(memory_url, memory_type, timeout)
+        memory_status = self._check_memory_service(
+            memory_url, memory_type, timeout, detailed, now
+        )
         services.append(memory_status)
 
         # Determine overall status
@@ -420,19 +433,29 @@ class SetupTools:
             message=message,
         )
 
-    def _check_rag_service(self, url: str, timeout: float) -> ServiceStatus:
+    def _check_rag_service(
+        self, url: str, timeout: float, detailed: bool, now: str
+    ) -> ServiceStatus:
         """Check RAG server availability."""
+        import time
+
         try:
+            start = time.time()
             response = httpx.get(
                 f"{url.rstrip('/')}/api/v1/heartbeat",
                 timeout=timeout,
             )
+            latency = (time.time() - start) * 1000 if detailed else None
+
             if response.status_code == 200:
                 return ServiceStatus(
                     name="RAG Server",
                     available=True,
                     url=url,
                     message="接続成功。コレクションは自動作成されます。",
+                    protocol="rest" if detailed else "",
+                    latency_ms=round(latency, 2) if latency else None,
+                    last_checked=now,
                 )
             else:
                 return ServiceStatus(
@@ -440,6 +463,8 @@ class SetupTools:
                     available=False,
                     url=url,
                     message=f"サーバーがステータス {response.status_code} を返しました",
+                    protocol="rest" if detailed else "",
+                    last_checked=now,
                 )
         except httpx.ConnectError:
             return ServiceStatus(
@@ -447,6 +472,8 @@ class SetupTools:
                 available=False,
                 url=url,
                 message="接続できませんでした。サーバーが起動していない可能性があります。",
+                protocol="rest" if detailed else "",
+                last_checked=now,
             )
         except httpx.TimeoutException:
             return ServiceStatus(
@@ -454,6 +481,8 @@ class SetupTools:
                 available=False,
                 url=url,
                 message="接続がタイムアウトしました。",
+                protocol="rest" if detailed else "",
+                last_checked=now,
             )
         except Exception as e:
             return ServiceStatus(
@@ -461,10 +490,12 @@ class SetupTools:
                 available=False,
                 url=url,
                 message=f"エラー: {e}",
+                protocol="rest" if detailed else "",
+                last_checked=now,
             )
 
     def _check_memory_service(
-        self, url: str, protocol: str, timeout: float
+        self, url: str, protocol: str, timeout: float, detailed: bool, now: str
     ) -> ServiceStatus:
         """Check Memory server availability.
 
@@ -472,7 +503,11 @@ class SetupTools:
             url: Memory server URL
             protocol: Protocol type ("rest" or "mcp")
             timeout: Connection timeout
+            detailed: Include detailed timing info
+            now: Timestamp for last_checked
         """
+        import time
+
         # Determine endpoint based on protocol
         if protocol == "mcp":
             check_url = f"{url.rstrip('/')}/sse"
@@ -482,10 +517,12 @@ class SetupTools:
             protocol_label = "REST"
 
         try:
+            start = time.time()
             if protocol == "mcp":
                 # SSE is a streaming endpoint that never completes
                 # Use stream() to check headers without waiting for body
                 with httpx.stream("GET", check_url, timeout=timeout) as response:
+                    latency = (time.time() - start) * 1000 if detailed else None
                     # Check if we get a valid SSE response
                     content_type = response.headers.get("content-type", "")
                     if response.status_code == 200 and "text/event-stream" in content_type:
@@ -494,6 +531,9 @@ class SetupTools:
                             available=True,
                             url=url,
                             message="接続成功。MCP/SSEでセッション状態を永続化できます。",
+                            protocol=protocol if detailed else "",
+                            latency_ms=round(latency, 2) if latency else None,
+                            last_checked=now,
                         )
                     elif response.status_code == 200:
                         # 200 but not SSE - still available
@@ -502,6 +542,9 @@ class SetupTools:
                             available=True,
                             url=url,
                             message="接続成功。",
+                            protocol=protocol if detailed else "",
+                            latency_ms=round(latency, 2) if latency else None,
+                            last_checked=now,
                         )
                     else:
                         return ServiceStatus(
@@ -509,16 +552,22 @@ class SetupTools:
                             available=False,
                             url=url,
                             message=f"サーバーがステータス {response.status_code} を返しました",
+                            protocol=protocol if detailed else "",
+                            last_checked=now,
                         )
             else:
                 # REST protocol - normal GET request
                 response = httpx.get(check_url, timeout=timeout)
+                latency = (time.time() - start) * 1000 if detailed else None
                 if 200 <= response.status_code < 300:
                     return ServiceStatus(
                         name=f"Memory Server ({protocol_label})",
                         available=True,
                         url=url,
                         message="接続成功。セッション状態を永続化できます。",
+                        protocol=protocol if detailed else "",
+                        latency_ms=round(latency, 2) if latency else None,
+                        last_checked=now,
                     )
                 else:
                     return ServiceStatus(
@@ -526,6 +575,8 @@ class SetupTools:
                         available=False,
                         url=url,
                         message=f"サーバーがステータス {response.status_code} を返しました",
+                        protocol=protocol if detailed else "",
+                        last_checked=now,
                     )
         except httpx.ConnectError:
             return ServiceStatus(
@@ -533,6 +584,8 @@ class SetupTools:
                 available=False,
                 url=url,
                 message="接続できませんでした。サーバーが起動していない可能性があります。",
+                protocol=protocol if detailed else "",
+                last_checked=now,
             )
         except httpx.TimeoutException:
             return ServiceStatus(
@@ -540,6 +593,8 @@ class SetupTools:
                 available=False,
                 url=url,
                 message="接続がタイムアウトしました。",
+                protocol=protocol if detailed else "",
+                last_checked=now,
             )
         except Exception as e:
             return ServiceStatus(
@@ -547,4 +602,311 @@ class SetupTools:
                 available=False,
                 url=url,
                 message=f"エラー: {e}",
+                protocol=protocol if detailed else "",
+                last_checked=now,
             )
+
+    def get_connection_info(self, timeout: float = 3.0) -> GetConnectionInfoResult:
+        """Get detailed connection information for all services.
+
+        Args:
+            timeout: Connection timeout in seconds
+
+        Returns:
+            GetConnectionInfoResult
+        """
+        from datetime import datetime
+
+        config_data = self._load_toml()
+        now = datetime.now().isoformat()
+
+        # Memory Server info
+        memory_url = self._get_nested_value(config_data, "services.memory_server_url")
+        if not memory_url:
+            memory_url = SETTINGS_REGISTRY["services.memory_server_url"]["default"]
+
+        memory_type = self._get_nested_value(config_data, "services.memory_server_type")
+        if not memory_type:
+            memory_type = SETTINGS_REGISTRY["services.memory_server_type"]["default"]
+
+        memory_info = self._get_memory_connection_info(memory_url, memory_type, timeout, now)
+
+        # RAG Server info
+        rag_url = self._get_nested_value(config_data, "services.rag_server_url")
+        if not rag_url:
+            rag_url = SETTINGS_REGISTRY["services.rag_server_url"]["default"]
+
+        rag_collection = self._get_nested_value(config_data, "services.rag_collection")
+        if not rag_collection:
+            rag_collection = SETTINGS_REGISTRY["services.rag_collection"]["default"]
+
+        rag_info = self._get_rag_connection_info(rag_url, rag_collection, timeout, now)
+
+        # Google info (basic - we can't check auth state without credentials)
+        google_info = GoogleConnectionInfo(
+            authenticated=False,  # Would need to check token
+            user="",
+            scopes=[],
+        )
+
+        return GetConnectionInfoResult(
+            success=True,
+            memory_server=memory_info,
+            rag_server=rag_info,
+            google=google_info,
+            message="接続情報を取得しました。",
+        )
+
+    def _get_memory_connection_info(
+        self, url: str, protocol: str, timeout: float, now: str
+    ) -> ServiceConnectionInfo:
+        """Get connection info for Memory server."""
+        import time
+
+        if protocol == "mcp":
+            check_url = f"{url.rstrip('/')}/sse"
+        else:
+            check_url = f"{url.rstrip('/')}/health"
+
+        try:
+            start = time.time()
+            if protocol == "mcp":
+                with httpx.stream("GET", check_url, timeout=timeout) as response:
+                    latency = (time.time() - start) * 1000
+                    content_type = response.headers.get("content-type", "")
+                    if response.status_code == 200:
+                        return ServiceConnectionInfo(
+                            name="Memory Server",
+                            url=url,
+                            protocol=protocol,
+                            status="connected",
+                            latency_ms=round(latency, 2),
+                            last_checked=now,
+                        )
+            else:
+                response = httpx.get(check_url, timeout=timeout)
+                latency = (time.time() - start) * 1000
+                if 200 <= response.status_code < 300:
+                    return ServiceConnectionInfo(
+                        name="Memory Server",
+                        url=url,
+                        protocol=protocol,
+                        status="connected",
+                        latency_ms=round(latency, 2),
+                        last_checked=now,
+                    )
+
+            return ServiceConnectionInfo(
+                name="Memory Server",
+                url=url,
+                protocol=protocol,
+                status="disconnected",
+                last_checked=now,
+            )
+        except Exception:
+            return ServiceConnectionInfo(
+                name="Memory Server",
+                url=url,
+                protocol=protocol,
+                status="disconnected",
+                last_checked=now,
+            )
+
+    def _get_rag_connection_info(
+        self, url: str, collection: str, timeout: float, now: str
+    ) -> ServiceConnectionInfo:
+        """Get connection info for RAG server."""
+        import time
+
+        try:
+            start = time.time()
+            response = httpx.get(
+                f"{url.rstrip('/')}/api/v1/heartbeat",
+                timeout=timeout,
+            )
+            latency = (time.time() - start) * 1000
+
+            if response.status_code == 200:
+                return ServiceConnectionInfo(
+                    name="RAG Server",
+                    url=url,
+                    protocol="rest",
+                    status="connected",
+                    latency_ms=round(latency, 2),
+                    collection=collection,
+                    last_checked=now,
+                )
+
+            return ServiceConnectionInfo(
+                name="RAG Server",
+                url=url,
+                protocol="rest",
+                status="disconnected",
+                collection=collection,
+                last_checked=now,
+            )
+        except Exception:
+            return ServiceConnectionInfo(
+                name="RAG Server",
+                url=url,
+                protocol="rest",
+                status="disconnected",
+                collection=collection,
+                last_checked=now,
+            )
+
+    def export_server_config(self) -> ExportServerConfigResult:
+        """Export server configuration for sharing with team members.
+
+        Returns a sanitized config without sensitive information.
+
+        Returns:
+            ExportServerConfigResult
+        """
+        config_data = self._load_toml()
+
+        # Create sanitized config
+        export_data = {}
+
+        # Services section (safe to share)
+        services = config_data.get("services", {})
+        if services:
+            export_data["services"] = {
+                "memory_server_url": services.get(
+                    "memory_server_url",
+                    SETTINGS_REGISTRY["services.memory_server_url"]["default"],
+                ),
+                "memory_server_type": services.get(
+                    "memory_server_type",
+                    SETTINGS_REGISTRY["services.memory_server_type"]["default"],
+                ),
+                "rag_server_url": services.get(
+                    "rag_server_url",
+                    SETTINGS_REGISTRY["services.rag_server_url"]["default"],
+                ),
+                "rag_collection": services.get(
+                    "rag_collection",
+                    SETTINGS_REGISTRY["services.rag_collection"]["default"],
+                ),
+            }
+
+        # Log section (safe to share)
+        log = config_data.get("log", {})
+        if log:
+            export_data["log"] = {
+                "level": log.get("level", "INFO"),
+                "format": log.get("format", "text"),
+            }
+
+        # Session section (only auto_save_interval)
+        session = config_data.get("session", {})
+        if session:
+            export_data["session"] = {
+                "auto_save_interval": session.get("auto_save_interval", 20),
+            }
+
+        # Note: google section is excluded (contains paths specific to each machine)
+        # Note: user_name is excluded (each user has their own)
+
+        try:
+            import io
+            buffer = io.BytesIO()
+            tomli_w.dump(export_data, buffer)
+            config_str = buffer.getvalue().decode("utf-8")
+
+            return ExportServerConfigResult(
+                success=True,
+                config=config_str,
+                message="サーバー設定をエクスポートしました。チームメンバーと共有できます。",
+            )
+        except Exception as e:
+            return ExportServerConfigResult(
+                success=False,
+                message=f"設定のエクスポートに失敗しました: {e}",
+            )
+
+    def import_server_config(self, config: str) -> ImportServerConfigResult:
+        """Import server configuration from a shared config string.
+
+        Args:
+            config: TOML formatted configuration string
+
+        Returns:
+            ImportServerConfigResult
+        """
+        try:
+            import_data = tomllib.loads(config)
+        except Exception as e:
+            return ImportServerConfigResult(
+                success=False,
+                validation_errors=[f"TOML解析エラー: {e}"],
+                message="設定ファイルの形式が正しくありません。",
+            )
+
+        imported = []
+        skipped = []
+        errors = []
+
+        # Load current config
+        current_config = self._load_toml()
+
+        # Import services section
+        if "services" in import_data:
+            services = import_data["services"]
+            for key in ["memory_server_url", "memory_server_type", "rag_server_url", "rag_collection"]:
+                if key in services:
+                    setting_key = f"services.{key}"
+                    validation_errors = self._validate_value(setting_key, services[key])
+                    if validation_errors:
+                        errors.extend(validation_errors)
+                        skipped.append(setting_key)
+                    else:
+                        self._set_nested_value(current_config, setting_key, services[key])
+                        imported.append(setting_key)
+
+        # Import log section
+        if "log" in import_data:
+            log = import_data["log"]
+            for key in ["level", "format"]:
+                if key in log:
+                    setting_key = f"log.{key}"
+                    validation_errors = self._validate_value(setting_key, log[key])
+                    if validation_errors:
+                        errors.extend(validation_errors)
+                        skipped.append(setting_key)
+                    else:
+                        self._set_nested_value(current_config, setting_key, log[key])
+                        imported.append(setting_key)
+
+        # Import session section (only auto_save_interval)
+        if "session" in import_data:
+            session = import_data["session"]
+            if "auto_save_interval" in session:
+                setting_key = "session.auto_save_interval"
+                validation_errors = self._validate_value(setting_key, session["auto_save_interval"])
+                if validation_errors:
+                    errors.extend(validation_errors)
+                    skipped.append(setting_key)
+                else:
+                    self._set_nested_value(current_config, setting_key, session["auto_save_interval"])
+                    imported.append(setting_key)
+
+        # Save updated config
+        if imported:
+            try:
+                self._save_toml(current_config)
+            except Exception as e:
+                return ImportServerConfigResult(
+                    success=False,
+                    validation_errors=[f"保存エラー: {e}"],
+                    message="設定の保存に失敗しました。",
+                )
+
+        return ImportServerConfigResult(
+            success=len(imported) > 0,
+            imported_settings=imported,
+            skipped_settings=skipped,
+            validation_errors=errors,
+            message=f"{len(imported)} 件の設定をインポートしました。"
+            + (f" {len(skipped)} 件はスキップされました。" if skipped else ""),
+        )

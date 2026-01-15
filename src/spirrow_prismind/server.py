@@ -68,10 +68,46 @@ TOOLS = [
     ),
     Tool(
         name="check_services_status",
-        description="RAGサーバーとMemoryサーバーの接続状態を確認します。サーバーが利用可能かどうか、コレクション/スキーマの自動作成状態も確認できます。",
+        description="RAGサーバーとMemoryサーバーの接続状態を確認します。サーバーが利用可能かどうか、コレクション/スキーマの自動作成状態も確認できます。detailed=trueでプロトコル、レイテンシ等の詳細情報を取得できます。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "detailed": {
+                    "type": "boolean",
+                    "description": "詳細情報を取得するか（protocol, latency_ms, last_checked）",
+                    "default": False,
+                },
+            },
+        },
+    ),
+    Tool(
+        name="get_connection_info",
+        description="現在の接続情報を取得します。Memory Server、RAG Server、Googleサービスの接続状態、レイテンシ、バージョン情報を表示します。",
         inputSchema={
             "type": "object",
             "properties": {},
+        },
+    ),
+    Tool(
+        name="export_server_config",
+        description="チームで共有可能なサーバー設定をエクスポートします。機密情報（パス）を除いたTOML形式で出力します。",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
+    Tool(
+        name="import_server_config",
+        description="共有されたサーバー設定をインポートします。設定の検証を行い、エラーがあれば報告します。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "string",
+                    "description": "TOML形式の設定内容",
+                },
+            },
+            "required": ["config"],
         },
     ),
     # Session Management
@@ -265,6 +301,20 @@ TOOLS = [
             "required": ["project"],
         },
     ),
+    Tool(
+        name="sync_projects_from_drive",
+        description="Google Driveのprojects_folder_id配下のフォルダ一覧をRAGと同期します。Driveをマスタとして、追加・削除を行います。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "trueの場合、実際の変更は行わず差分のみ報告",
+                    "default": False,
+                },
+            },
+        },
+    ),
     # Document Operations
     Tool(
         name="get_document",
@@ -347,6 +397,69 @@ TOOLS = [
                 },
             },
             "required": ["doc_id"],
+        },
+    ),
+    # Document Type Management
+    Tool(
+        name="list_document_types",
+        description="利用可能なドキュメントタイプ一覧を取得します。ビルトインタイプ（設計書、実装手順書）とプロジェクト固有のカスタムタイプを返します。",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
+    Tool(
+        name="register_document_type",
+        description="新しいドキュメントタイプを登録します。プロジェクト固有のカスタムドキュメントタイプを追加できます。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "type_id": {
+                    "type": "string",
+                    "description": "タイプID（英数字とアンダースコア、例: meeting_notes）",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "表示名（例: 議事録）",
+                },
+                "folder_name": {
+                    "type": "string",
+                    "description": "Google Drive内のフォルダ名",
+                },
+                "template_doc_id": {
+                    "type": "string",
+                    "description": "テンプレートのGoogle Docs ID（省略可）",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "ドキュメントタイプの説明",
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "カスタムメタデータフィールド",
+                },
+                "create_folder": {
+                    "type": "boolean",
+                    "description": "フォルダを自動作成するか",
+                    "default": True,
+                },
+            },
+            "required": ["type_id", "name", "folder_name"],
+        },
+    ),
+    Tool(
+        name="delete_document_type",
+        description="カスタムドキュメントタイプを削除します。ビルトインタイプは削除できません。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "type_id": {
+                    "type": "string",
+                    "description": "削除するタイプID",
+                },
+            },
+            "required": ["type_id"],
         },
     ),
     # Catalog Operations
@@ -861,19 +974,94 @@ class PrismindServer:
                 config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
                 self._setup_tools = SetupTools(config_path)
 
-            result = self._setup_tools.check_services_status()
+            detailed = args.get("detailed", False)
+            result = self._setup_tools.check_services_status(detailed=detailed)
+            services_data = []
+            for s in result.services:
+                service_dict = {
+                    "name": s.name,
+                    "available": s.available,
+                    "url": s.url,
+                    "message": s.message,
+                }
+                if detailed:
+                    service_dict["protocol"] = s.protocol
+                    service_dict["latency_ms"] = s.latency_ms
+                    service_dict["version"] = s.version
+                    service_dict["last_checked"] = s.last_checked
+                services_data.append(service_dict)
+
             return {
                 "success": result.success,
-                "services": [
-                    {
-                        "name": s.name,
-                        "available": s.available,
-                        "url": s.url,
-                        "message": s.message,
-                    }
-                    for s in result.services
-                ],
+                "services": services_data,
                 "all_available": result.all_required_available,
+                "message": result.message,
+            }
+
+        elif name == "get_connection_info":
+            if not self._setup_tools:
+                config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+                self._setup_tools = SetupTools(config_path)
+
+            result = self._setup_tools.get_connection_info()
+            response = {
+                "success": result.success,
+                "message": result.message,
+            }
+            if result.memory_server:
+                response["memory_server"] = {
+                    "name": result.memory_server.name,
+                    "url": result.memory_server.url,
+                    "protocol": result.memory_server.protocol,
+                    "status": result.memory_server.status,
+                    "latency_ms": result.memory_server.latency_ms,
+                    "version": result.memory_server.version,
+                    "last_checked": result.memory_server.last_checked,
+                }
+            if result.rag_server:
+                response["rag_server"] = {
+                    "name": result.rag_server.name,
+                    "url": result.rag_server.url,
+                    "protocol": result.rag_server.protocol,
+                    "status": result.rag_server.status,
+                    "latency_ms": result.rag_server.latency_ms,
+                    "version": result.rag_server.version,
+                    "collection": result.rag_server.collection,
+                    "last_checked": result.rag_server.last_checked,
+                }
+            if result.google:
+                response["google"] = {
+                    "authenticated": result.google.authenticated,
+                    "user": result.google.user,
+                    "scopes": result.google.scopes,
+                }
+            return response
+
+        elif name == "export_server_config":
+            if not self._setup_tools:
+                config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+                self._setup_tools = SetupTools(config_path)
+
+            result = self._setup_tools.export_server_config()
+            return {
+                "success": result.success,
+                "config": result.config,
+                "message": result.message,
+            }
+
+        elif name == "import_server_config":
+            if not self._setup_tools:
+                config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
+                self._setup_tools = SetupTools(config_path)
+
+            result = self._setup_tools.import_server_config(
+                config=args["config"],
+            )
+            return {
+                "success": result.success,
+                "imported_settings": result.imported_settings,
+                "skipped_settings": result.skipped_settings,
+                "validation_errors": result.validation_errors,
                 "message": result.message,
             }
 
@@ -881,8 +1069,9 @@ class PrismindServer:
         google_required_tools = [
             "start_session", "end_session", "save_session",
             "setup_project", "switch_project", "list_projects",
-            "update_project", "delete_project",
+            "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
+            "list_document_types", "register_document_type", "delete_document_type",
             "search_catalog", "sync_catalog",
             "get_progress", "update_task_status", "add_task",
         ]
@@ -1029,7 +1218,20 @@ class PrismindServer:
                 "project_id": result.project_id,
                 "message": result.message,
             }
-        
+
+        elif name == "sync_projects_from_drive":
+            result = self._project_tools.sync_projects_from_drive(
+                dry_run=args.get("dry_run", False),
+            )
+            return {
+                "success": result.success,
+                "added": result.added,
+                "removed": result.removed,
+                "unchanged": result.unchanged,
+                "errors": result.errors,
+                "message": result.message,
+            }
+
         # Document Operations
         elif name == "get_document":
             result = self._document_tools.get_document(
@@ -1093,7 +1295,55 @@ class PrismindServer:
                 "updated_fields": result.updated_fields,
                 "message": result.message,
             }
-        
+
+        # Document Type Management
+        elif name == "list_document_types":
+            result = self._document_tools.list_document_types()
+            return {
+                "success": result.success,
+                "document_types": [
+                    {
+                        "type_id": dt.type_id,
+                        "name": dt.name,
+                        "folder_name": dt.folder_name,
+                        "template_doc_id": dt.template_doc_id,
+                        "description": dt.description,
+                        "fields": dt.fields,
+                        "is_builtin": dt.is_builtin,
+                    }
+                    for dt in result.document_types
+                ],
+                "message": result.message,
+            }
+
+        elif name == "register_document_type":
+            result = self._document_tools.register_document_type(
+                type_id=args["type_id"],
+                name=args["name"],
+                folder_name=args["folder_name"],
+                template_doc_id=args.get("template_doc_id"),
+                description=args.get("description"),
+                fields=args.get("fields"),
+                create_folder=args.get("create_folder", True),
+            )
+            return {
+                "success": result.success,
+                "type_id": result.type_id,
+                "name": result.name,
+                "folder_created": result.folder_created,
+                "message": result.message,
+            }
+
+        elif name == "delete_document_type":
+            result = self._document_tools.delete_document_type(
+                type_id=args["type_id"],
+            )
+            return {
+                "success": result.success,
+                "type_id": result.type_id,
+                "message": result.message,
+            }
+
         # Catalog Operations
         elif name == "search_catalog":
             result = self._catalog_tools.search_catalog(
