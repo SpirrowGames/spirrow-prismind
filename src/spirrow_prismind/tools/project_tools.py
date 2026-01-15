@@ -903,7 +903,7 @@ class ProjectTools:
         drive_projects: dict[str, dict] = {}
         try:
             contents = self.drive.list_folder_contents(self.projects_folder_id)
-            for folder in contents.folders:
+            for folder in contents.subfolders:
                 # Search for spreadsheet in each folder
                 spreadsheet = self._find_project_spreadsheet(folder.file_id)
                 if spreadsheet:
