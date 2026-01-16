@@ -13,6 +13,8 @@ from typing import Any, Literal, Optional
 
 import httpx
 
+from .retry import RETRYABLE_EXCEPTIONS, with_retry
+
 logger = logging.getLogger(__name__)
 
 
@@ -190,15 +192,25 @@ class RestMemoryBackend(MemoryBackend):
         json_data: Optional[dict] = None,
         params: Optional[dict] = None,
     ) -> Optional[dict]:
-        """Make an HTTP request to the memory server."""
+        """Make an HTTP request to the memory server with retry."""
         url = f"{self.base_url}{endpoint}"
 
-        response = self._client.request(
-            method=method,
-            url=url,
-            json=json_data,
-            params=params,
+        # Use retry wrapper for transient network errors
+        @with_retry(
+            max_retries=3,
+            base_delay=0.5,
+            max_delay=10.0,
+            retryable_exceptions=RETRYABLE_EXCEPTIONS,
         )
+        def do_request() -> httpx.Response:
+            return self._client.request(
+                method=method,
+                url=url,
+                json=json_data,
+                params=params,
+            )
+
+        response = do_request()
 
         if response.status_code == 404:
             return None
@@ -530,7 +542,10 @@ class MemoryClient:
     """Client for Memory Server operations.
 
     Supports both REST and MCP protocols based on configuration.
+    Falls back to local file storage when server is unavailable.
     """
+
+    _FALLBACK_FILE = ".prismind_memory_cache.json"
 
     def __init__(
         self,
@@ -538,6 +553,7 @@ class MemoryClient:
         timeout: float = 10.0,
         connect_timeout: float = 3.0,
         protocol: Literal["rest", "mcp"] = "rest",
+        fallback_dir: Optional[str] = None,
     ):
         """Initialize the memory client.
 
@@ -546,6 +562,7 @@ class MemoryClient:
             timeout: Request timeout in seconds
             connect_timeout: Connection check timeout in seconds
             protocol: Protocol to use ("rest" or "mcp")
+            fallback_dir: Directory for fallback file (default: current dir)
         """
         self._protocol = protocol
 
@@ -561,13 +578,63 @@ class MemoryClient:
                 connect_timeout=connect_timeout,
             )
 
+        # Setup fallback storage
+        from pathlib import Path
+
+        if fallback_dir:
+            self._fallback_file = Path(fallback_dir) / self._FALLBACK_FILE
+        else:
+            self._fallback_file = Path(self._FALLBACK_FILE)
+
+        self._fallback_data: dict[str, Any] = {}
+        self._load_fallback_data()
+
+        if not self._backend.is_available:
+            logger.info(
+                f"Memory server unavailable - using fallback: {self._fallback_file}"
+            )
+
+    def _load_fallback_data(self) -> None:
+        """Load fallback data from file."""
+        try:
+            if self._fallback_file.exists():
+                self._fallback_data = json.loads(
+                    self._fallback_file.read_text(encoding="utf-8")
+                )
+                logger.debug(
+                    f"Loaded {len(self._fallback_data)} entries from fallback"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load fallback data: {e}")
+            self._fallback_data = {}
+
+    def _save_fallback_data(self) -> None:
+        """Save fallback data to file."""
+        try:
+            self._fallback_file.write_text(
+                json.dumps(self._fallback_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.error(f"Failed to save fallback data: {e}")
+
     @property
     def is_available(self) -> bool:
-        """Check if the Memory server is available."""
+        """Check if the Memory server is available.
+
+        Note: Returns True even when using fallback storage,
+        as operations will still work via local file.
+        """
+        return self._backend.is_available or bool(self._fallback_data) or True
+
+    @property
+    def is_server_available(self) -> bool:
+        """Check if the actual Memory server is available."""
         return self._backend.is_available
 
     def close(self):
-        """Close the client."""
+        """Close the client and save fallback data."""
+        self._save_fallback_data()
         self._backend.close()
 
     def __enter__(self):
@@ -577,24 +644,92 @@ class MemoryClient:
         self.close()
 
     # ===================
-    # Basic Operations (delegated to backend)
+    # Basic Operations (with fallback)
     # ===================
 
     def get(self, key: str) -> Optional[MemoryEntry]:
-        """Get a value by key."""
-        return self._backend.get(key)
+        """Get a value by key with fallback support."""
+        # Try backend first
+        if self._backend.is_available:
+            result = self._backend.get(key)
+            if result is not None:
+                return result
+
+        # Fall back to local storage
+        if key in self._fallback_data:
+            data = self._fallback_data[key]
+            return MemoryEntry(
+                key=key,
+                value=data.get("value"),
+                created_at=data.get("created_at", ""),
+                updated_at=data.get("updated_at", ""),
+            )
+
+        return None
 
     def set(self, key: str, value: Any) -> MemoryOperationResult:
-        """Set a value."""
-        return self._backend.set(key, value)
+        """Set a value with fallback support."""
+        now = datetime.now().isoformat()
+
+        # Try backend first
+        backend_success = False
+        if self._backend.is_available:
+            result = self._backend.set(key, value)
+            backend_success = result.success
+
+        # Always save to fallback for resilience
+        existing = self._fallback_data.get(key, {})
+        self._fallback_data[key] = {
+            "value": value,
+            "created_at": existing.get("created_at", now),
+            "updated_at": now,
+        }
+        self._save_fallback_data()
+
+        if backend_success:
+            return MemoryOperationResult(
+                success=True,
+                key=key,
+                message="Value set (server + fallback)",
+            )
+        else:
+            return MemoryOperationResult(
+                success=True,
+                key=key,
+                message="Value set (fallback only)",
+            )
 
     def delete(self, key: str) -> MemoryOperationResult:
-        """Delete a key."""
-        return self._backend.delete(key)
+        """Delete a key with fallback support."""
+        # Try backend
+        if self._backend.is_available:
+            self._backend.delete(key)
+
+        # Delete from fallback
+        if key in self._fallback_data:
+            del self._fallback_data[key]
+            self._save_fallback_data()
+
+        return MemoryOperationResult(
+            success=True,
+            key=key,
+            message="Key deleted",
+        )
 
     def list_keys(self, prefix: Optional[str] = None) -> list[str]:
         """List all keys, optionally filtered by prefix."""
-        return self._backend.list_keys(prefix)
+        keys = set()
+
+        # Get from backend
+        if self._backend.is_available:
+            keys.update(self._backend.list_keys(prefix))
+
+        # Merge with fallback keys
+        for key in self._fallback_data.keys():
+            if prefix is None or key.startswith(prefix):
+                keys.add(key)
+
+        return sorted(keys)
 
     # =======================
     # Session State Operations

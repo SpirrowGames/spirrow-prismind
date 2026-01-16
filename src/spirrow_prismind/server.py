@@ -575,6 +575,37 @@ TOOLS = [
             "required": ["query"],
         },
     ),
+    Tool(
+        name="update_knowledge",
+        description="既存の知見を更新します。",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "knowledge_id": {
+                    "type": "string",
+                    "description": "更新する知見のID",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "新しい内容（省略時は変更なし）",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "新しいカテゴリ（省略時は変更なし）",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "新しいタグ（省略時は変更なし）",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "新しい情報源（省略時は変更なし）",
+                },
+            },
+            "required": ["knowledge_id"],
+        },
+    ),
     # Progress Management
     Tool(
         name="get_progress",
@@ -1421,6 +1452,21 @@ class PrismindServer:
                     }
                     for k in result.knowledge
                 ],
+                "message": result.message,
+            }
+
+        elif name == "update_knowledge":
+            result = self._knowledge_tools.update_knowledge(
+                knowledge_id=args["knowledge_id"],
+                content=args.get("content"),
+                category=args.get("category"),
+                tags=args.get("tags"),
+                source=args.get("source"),
+            )
+            return {
+                "success": result.success,
+                "knowledge_id": result.knowledge_id,
+                "updated_fields": result.updated_fields,
                 "message": result.message,
             }
 

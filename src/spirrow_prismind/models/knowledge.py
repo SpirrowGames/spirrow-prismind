@@ -53,6 +53,16 @@ class SearchKnowledgeResult:
     message: str = ""
 
 
+@dataclass
+class UpdateKnowledgeResult:
+    """Result of updating knowledge."""
+
+    success: bool
+    knowledge_id: str = ""
+    updated_fields: list[str] = field(default_factory=list)
+    message: str = ""
+
+
 # Knowledge categories
 KNOWLEDGE_CATEGORIES = [
     "問題解決",

@@ -21,6 +21,13 @@ from .rag_client import (
     RAGOperationResult,
     RAGSearchResult,
 )
+from .retry import (
+    RETRYABLE_EXCEPTIONS,
+    RetryConfig,
+    default_retry_config,
+    retry_on_network_error,
+    with_retry,
+)
 
 __all__ = [
     # Google Docs
@@ -45,4 +52,10 @@ __all__ = [
     "RAGDocument",
     "RAGOperationResult",
     "RAGSearchResult",
+    # Retry
+    "RETRYABLE_EXCEPTIONS",
+    "RetryConfig",
+    "default_retry_config",
+    "retry_on_network_error",
+    "with_retry",
 ]

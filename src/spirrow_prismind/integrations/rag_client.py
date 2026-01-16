@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 import httpx
 
+from .retry import RETRYABLE_EXCEPTIONS, with_retry
+
 logger = logging.getLogger(__name__)
 
 
@@ -136,30 +138,40 @@ class RAGClient:
         json_data: Optional[dict] = None,
         params: Optional[dict] = None,
     ) -> dict:
-        """Make an HTTP request to the RAG server.
-        
+        """Make an HTTP request to the RAG server with retry.
+
         Args:
             method: HTTP method (GET, POST, PUT, DELETE)
             endpoint: API endpoint
             json_data: JSON body data
             params: Query parameters
-            
+
         Returns:
             Response JSON
-            
+
         Raises:
-            httpx.HTTPError: If the request fails
+            httpx.HTTPError: If the request fails after retries
         """
         url = f"{self.base_url}{endpoint}"
-        
-        response = self._client.request(
-            method=method,
-            url=url,
-            json=json_data,
-            params=params,
+
+        # Use retry wrapper for transient network errors
+        @with_retry(
+            max_retries=3,
+            base_delay=0.5,
+            max_delay=10.0,
+            retryable_exceptions=RETRYABLE_EXCEPTIONS,
         )
+        def do_request() -> httpx.Response:
+            return self._client.request(
+                method=method,
+                url=url,
+                json=json_data,
+                params=params,
+            )
+
+        response = do_request()
         response.raise_for_status()
-        
+
         return response.json()
 
     # ===================

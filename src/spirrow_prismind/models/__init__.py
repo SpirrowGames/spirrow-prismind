@@ -13,7 +13,12 @@ from .document import (
     RegisterDocumentTypeResult,
     UpdateDocumentResult,
 )
-from .knowledge import AddKnowledgeResult, KnowledgeEntry, SearchKnowledgeResult
+from .knowledge import (
+    AddKnowledgeResult,
+    KnowledgeEntry,
+    SearchKnowledgeResult,
+    UpdateKnowledgeResult,
+)
 from .progress import (
     GetProgressResult,
     PhaseProgress,
@@ -85,6 +90,7 @@ __all__ = [
     "AddKnowledgeResult",
     "KnowledgeEntry",
     "SearchKnowledgeResult",
+    "UpdateKnowledgeResult",
     # Progress
     "GetProgressResult",
     "PhaseProgress",
