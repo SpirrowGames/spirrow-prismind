@@ -274,20 +274,27 @@ class DocumentTools:
             
             # Step 4: Register in catalog (Sheets)
             catalog_registered = False
+            catalog_warning = ""
             try:
-                self._register_in_sheets_catalog(
-                    config=config,
-                    doc_id=doc_id,
-                    name=name,
-                    doc_type=doc_type,
-                    phase_task=phase_task,
-                    feature=feature,
-                    keywords=keywords,
-                    reference_timing=reference_timing,
-                )
-                catalog_registered = True
+                # Check if catalog sheet exists
+                if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.catalog):
+                    catalog_warning = f"目録シート '{config.sheets.catalog}' が見つかりません。RAGのみに登録しました。"
+                    logger.warning(catalog_warning)
+                else:
+                    self._register_in_sheets_catalog(
+                        config=config,
+                        doc_id=doc_id,
+                        name=name,
+                        doc_type=doc_type,
+                        phase_task=phase_task,
+                        feature=feature,
+                        keywords=keywords,
+                        reference_timing=reference_timing,
+                    )
+                    catalog_registered = True
             except Exception as e:
                 logger.error(f"Failed to register in Sheets catalog: {e}")
+                catalog_warning = f"目録シートへの登録に失敗しました: {e}"
             
             # Step 5: Register in RAG cache
             self.rag.add_catalog_entry(
@@ -306,6 +313,10 @@ class DocumentTools:
                 },
             )
             
+            message = f"ドキュメント '{name}' を作成しました。"
+            if catalog_warning:
+                message += f" ({catalog_warning})"
+
             return CreateDocumentResult(
                 success=True,
                 doc_id=doc_id,
@@ -313,7 +324,7 @@ class DocumentTools:
                 doc_url=doc_url,
                 source="Google Docs",
                 catalog_registered=catalog_registered,
-                message=f"ドキュメント '{name}' を作成しました。",
+                message=message,
             )
             
         except Exception as e:

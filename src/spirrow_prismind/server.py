@@ -805,6 +805,7 @@ class PrismindServer:
         self._knowledge_tools = KnowledgeTools(
             rag_client=self._rag_client,
             project_tools=self._project_tools,
+            memory_client=self._memory_client,
             user_name=self.config.user_name,
         )
         

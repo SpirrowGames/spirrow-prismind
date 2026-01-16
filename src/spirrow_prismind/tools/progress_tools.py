@@ -79,6 +79,14 @@ class ProgressTools:
             )
 
         try:
+            # Check if progress sheet exists
+            if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.progress):
+                return GetProgressResult(
+                    success=False,
+                    project=project,
+                    message=f"進捗シート '{config.sheets.progress}' が見つかりません。プロジェクト設定を確認してください。",
+                )
+
             # Read from Google Sheets
             range_name = f"{config.sheets.progress}!A:G"
             result = self.sheets.read_range(
@@ -235,6 +243,15 @@ class ProgressTools:
             )
 
         try:
+            # Check if progress sheet exists
+            if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.progress):
+                return UpdateProgressResult(
+                    success=False,
+                    project=project,
+                    task_id=task_id,
+                    message=f"進捗シート '{config.sheets.progress}' が見つかりません。プロジェクト設定を確認してください。",
+                )
+
             # Read current data
             range_name = f"{config.sheets.progress}!A:G"
             result = self.sheets.read_range(
@@ -388,6 +405,15 @@ class ProgressTools:
             )
 
         try:
+            # Check if progress sheet exists
+            if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.progress):
+                return UpdateProgressResult(
+                    success=False,
+                    project=project,
+                    task_id=task_id,
+                    message=f"進捗シート '{config.sheets.progress}' が見つかりません。プロジェクト設定を確認してください。",
+                )
+
             # Create task row
             task = TaskProgress(
                 task_id=task_id,

@@ -185,15 +185,23 @@ class CatalogTools:
             )
         
         try:
+            # Check if catalog sheet exists
+            if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.catalog):
+                return SyncCatalogResult(
+                    success=False,
+                    synced_count=0,
+                    message=f"目録シート '{config.sheets.catalog}' が見つかりません。プロジェクト設定を確認してください。",
+                )
+
             # Read from Google Sheets
             range_name = f"{config.sheets.catalog}!A:M"
             result = self.sheets.read_range(
                 spreadsheet_id=config.spreadsheet_id,
                 range_name=range_name,
             )
-            
+
             rows = result.get("values", [])
-            
+
             if not rows:
                 return SyncCatalogResult(
                     success=True,

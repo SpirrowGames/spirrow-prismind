@@ -1,9 +1,10 @@
 """Knowledge management tools for Spirrow-Prismind."""
 
+import json
 import logging
 from typing import Optional
 
-from ..integrations import RAGClient
+from ..integrations import MemoryClient, RAGClient
 from ..models import (
     AddKnowledgeResult,
     KnowledgeEntry,
@@ -31,17 +32,20 @@ class KnowledgeTools:
         self,
         rag_client: RAGClient,
         project_tools: ProjectTools,
+        memory_client: Optional[MemoryClient] = None,
         user_name: str = "default",
     ):
         """Initialize knowledge tools.
-        
+
         Args:
             rag_client: RAG client for knowledge storage
             project_tools: Project tools for config access
+            memory_client: Memory client for caching (optional)
             user_name: Default user ID
         """
         self.rag = rag_client
         self.project_tools = project_tools
+        self.memory = memory_client
         self.user_name = user_name
 
     def add_knowledge(
@@ -93,7 +97,7 @@ class KnowledgeTools:
             project=project,
             source=source,
         )
-        
+
         if not result.success:
             return AddKnowledgeResult(
                 success=False,
@@ -101,7 +105,31 @@ class KnowledgeTools:
                 tags=tags,
                 message=f"知見の登録に失敗しました: {result.message}",
             )
-        
+
+        # Verify registration by checking if document exists
+        doc = self.rag.get_document(result.doc_id)
+        if doc is None:
+            return AddKnowledgeResult(
+                success=False,
+                knowledge_id=result.doc_id,
+                tags=tags,
+                message="知見の登録に失敗しました（ドキュメントが見つかりません）",
+            )
+
+        # Cache in Memory Server for immediate search availability
+        metadata = {
+            "category": category,
+            "tags": tags,
+            "source": source or "",
+        }
+        if self.memory and self.memory.is_available:
+            self.memory.cache_recent_knowledge(
+                knowledge_id=result.doc_id,
+                content=content,
+                metadata=metadata,
+                project=project,
+            )
+
         return AddKnowledgeResult(
             success=True,
             knowledge_id=result.doc_id,
@@ -134,21 +162,20 @@ class KnowledgeTools:
             SearchKnowledgeResult
         """
         user = user or self.user_name
-        
-        # If project is None and include_general, search all
-        # If project is specified, search that project (+ general if include_general)
+
+        # Get current project if not specified
         search_project = project
-        if search_project is None and not include_general:
-            # Get current project
+        if search_project is None:
             search_project = self.project_tools.get_current_project_id(user)
-        
-        # Search RAG
+
+        # Search RAG with project filter
+        # RAG will include general knowledge (empty project) via $or clause when project is specified
         result = self.rag.search_knowledge(
             query=query,
             category=category,
-            project=search_project if not include_general else None,
+            project=search_project,  # Always pass project for proper filtering
             tags=tags,
-            n_results=limit,
+            n_results=limit * 2 if include_general else limit,  # Get more results if including general
         )
         
         if not result.success:
@@ -163,30 +190,82 @@ class KnowledgeTools:
         knowledge = []
         for doc in result.documents:
             meta = doc.metadata
-            
+
             # Parse created_at
             created_at_str = meta.get("created_at", "")
-            
+
+            # Parse tags (handle both list and JSON string)
+            doc_tags = meta.get("tags", [])
+            if isinstance(doc_tags, str):
+                try:
+                    doc_tags = json.loads(doc_tags)
+                except json.JSONDecodeError:
+                    # Try comma-separated
+                    doc_tags = [t.strip() for t in doc_tags.split(",") if t.strip()]
+
             knowledge.append(KnowledgeEntry(
                 knowledge_id=doc.doc_id,
                 content=doc.content,
                 category=meta.get("category", ""),
                 project=meta.get("project"),
-                tags=meta.get("tags", []),
+                tags=doc_tags if isinstance(doc_tags, list) else [],
                 source=meta.get("source"),
                 created_at=created_at_str,
                 relevance_score=doc.score,
             ))
-        
+
         # Filter by project if needed
-        if search_project and include_general:
-            # Keep both project-specific and general
-            filtered = []
-            for k in knowledge:
-                if k.project == search_project or k.project == "" or k.project is None:
-                    filtered.append(k)
+        if search_project:
+            if include_general:
+                # Keep both project-specific and general
+                filtered = [
+                    k for k in knowledge
+                    if k.project == search_project or k.project == "" or k.project is None
+                ]
+            else:
+                # Keep only project-specific
+                filtered = [k for k in knowledge if k.project == search_project]
             knowledge = filtered
-        
+
+        # Merge with cached recent knowledge (for immediate availability)
+        existing_ids = {k.knowledge_id for k in knowledge}
+        if self.memory and self.memory.is_available:
+            cached = self.memory.get_recent_knowledge(
+                project=search_project if not include_general else None,
+                limit=limit,
+            )
+            for entry in cached:
+                kid = entry.get("knowledge_id", "")
+                if kid and kid not in existing_ids:
+                    # Simple text matching for cached entries
+                    content = entry.get("content", "")
+                    query_lower = query.lower()
+                    if query_lower in content.lower():
+                        meta = entry.get("metadata", {})
+                        # Apply category filter
+                        if category and meta.get("category") != category:
+                            continue
+                        # Apply tags filter
+                        if tags:
+                            entry_tags = meta.get("tags", [])
+                            if not all(t in entry_tags for t in tags):
+                                continue
+
+                        knowledge.insert(0, KnowledgeEntry(
+                            knowledge_id=kid,
+                            content=content,
+                            category=meta.get("category", ""),
+                            project=entry.get("project"),
+                            tags=meta.get("tags", []),
+                            source=meta.get("source"),
+                            created_at=entry.get("cached_at", ""),
+                            relevance_score=1.0,  # High score for recent cache
+                        ))
+                        existing_ids.add(kid)
+
+        # Apply limit
+        knowledge = knowledge[:limit]
+
         return SearchKnowledgeResult(
             success=True,
             total_count=len(knowledge),

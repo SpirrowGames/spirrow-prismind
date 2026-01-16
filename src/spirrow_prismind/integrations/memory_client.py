@@ -743,3 +743,174 @@ class MemoryClient:
                         sessions.append(SessionState.from_dict(entry.value))
 
         return sessions
+
+    # =======================
+    # Recent Knowledge Cache
+    # =======================
+
+    _RECENT_KNOWLEDGE_INDEX_KEY = "prismind:recent_knowledge_index"
+    _MAX_CACHED_KNOWLEDGE = 50  # Maximum entries to keep in cache
+
+    def cache_recent_knowledge(
+        self,
+        knowledge_id: str,
+        content: str,
+        metadata: dict,
+        project: Optional[str] = None,
+    ) -> MemoryOperationResult:
+        """Cache recently added knowledge for immediate search availability.
+
+        Args:
+            knowledge_id: Knowledge entry ID
+            content: Knowledge content
+            metadata: Knowledge metadata
+            project: Related project
+
+        Returns:
+            MemoryOperationResult
+        """
+        # Save the knowledge data
+        data_key = f"prismind:recent_knowledge:{knowledge_id}"
+        value = {
+            "knowledge_id": knowledge_id,
+            "content": content,
+            "metadata": metadata,
+            "project": project or "",
+            "cached_at": datetime.now().isoformat(),
+        }
+        result = self.set(data_key, value)
+
+        if result.success:
+            # Update the index (list of cached IDs)
+            index_entry = self.get(self._RECENT_KNOWLEDGE_INDEX_KEY)
+            if index_entry and index_entry.value:
+                index = index_entry.value
+                if isinstance(index, str):
+                    try:
+                        index = json.loads(index)
+                    except json.JSONDecodeError:
+                        index = []
+            else:
+                index = []
+
+            # Add new ID at the beginning, remove duplicates
+            if knowledge_id in index:
+                index.remove(knowledge_id)
+            index.insert(0, knowledge_id)
+
+            # Trim to max size
+            if len(index) > self._MAX_CACHED_KNOWLEDGE:
+                # Remove oldest entries
+                for old_id in index[self._MAX_CACHED_KNOWLEDGE:]:
+                    self.delete(f"prismind:recent_knowledge:{old_id}")
+                index = index[:self._MAX_CACHED_KNOWLEDGE]
+
+            self.set(self._RECENT_KNOWLEDGE_INDEX_KEY, index)
+
+        return result
+
+    def get_recent_knowledge(
+        self,
+        project: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Get recently cached knowledge entries.
+
+        Args:
+            project: Filter by project (None for all)
+            limit: Maximum entries to return
+
+        Returns:
+            List of knowledge entries
+        """
+        # Get the index of cached IDs
+        index_entry = self.get(self._RECENT_KNOWLEDGE_INDEX_KEY)
+        if not index_entry or not index_entry.value:
+            return []
+
+        index = index_entry.value
+        if isinstance(index, str):
+            try:
+                index = json.loads(index)
+            except json.JSONDecodeError:
+                return []
+
+        entries = []
+        for knowledge_id in index:
+            if len(entries) >= limit:
+                break
+
+            data_key = f"prismind:recent_knowledge:{knowledge_id}"
+            entry = self.get(data_key)
+            if entry and entry.value:
+                value = entry.value
+                if isinstance(value, str):
+                    try:
+                        value = json.loads(value)
+                    except json.JSONDecodeError:
+                        continue
+
+                # Filter by project if specified
+                if project:
+                    entry_project = value.get("project", "")
+                    if entry_project != project and entry_project != "":
+                        continue
+
+                entries.append(value)
+
+        return entries
+
+    def clear_recent_knowledge(
+        self,
+        knowledge_id: Optional[str] = None,
+    ) -> int:
+        """Clear recent knowledge cache.
+
+        Args:
+            knowledge_id: Specific ID to clear (None for all)
+
+        Returns:
+            Number of entries cleared
+        """
+        if knowledge_id:
+            # Remove specific entry
+            data_key = f"prismind:recent_knowledge:{knowledge_id}"
+            result = self.delete(data_key)
+
+            # Update index
+            index_entry = self.get(self._RECENT_KNOWLEDGE_INDEX_KEY)
+            if index_entry and index_entry.value:
+                index = index_entry.value
+                if isinstance(index, str):
+                    try:
+                        index = json.loads(index)
+                    except json.JSONDecodeError:
+                        index = []
+                if knowledge_id in index:
+                    index.remove(knowledge_id)
+                    self.set(self._RECENT_KNOWLEDGE_INDEX_KEY, index)
+
+            return 1 if result.success else 0
+
+        # Clear all
+        index_entry = self.get(self._RECENT_KNOWLEDGE_INDEX_KEY)
+        if not index_entry or not index_entry.value:
+            return 0
+
+        index = index_entry.value
+        if isinstance(index, str):
+            try:
+                index = json.loads(index)
+            except json.JSONDecodeError:
+                return 0
+
+        count = 0
+        for kid in index:
+            result = self.delete(f"prismind:recent_knowledge:{kid}")
+            if result.success:
+                count += 1
+
+        # Clear the index
+        self.delete(self._RECENT_KNOWLEDGE_INDEX_KEY)
+
+        return count

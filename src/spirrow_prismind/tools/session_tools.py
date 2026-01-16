@@ -53,6 +53,27 @@ class SessionTools:
         self._current_project: Optional[str] = None
         self._current_user: Optional[str] = None
 
+    def _get_current_project(self, user: str) -> Optional[str]:
+        """Get current project, preferring Memory Server over local state.
+
+        This ensures switch_project changes are properly reflected.
+
+        Args:
+            user: User ID
+
+        Returns:
+            Current project ID or None
+        """
+        # MemoryServerを優先参照（switch_projectの変更を反映）
+        current = self.memory.get_current_project(user)
+        if current and current.project_id:
+            # ローカル状態も同期
+            self._current_project = current.project_id
+            return current.project_id
+
+        # フォールバック: ローカル状態
+        return self._current_project
+
     def start_session(
         self,
         project: Optional[str] = None,
@@ -171,14 +192,8 @@ class SessionTools:
             EndSessionResult
         """
         user = user or self._current_user or self.user_name
-        project = self._current_project
-        
-        if not project:
-            # Try to get from memory
-            current = self.memory.get_current_project(user)
-            if current:
-                project = current.project_id
-        
+        project = self._get_current_project(user)
+
         if not project:
             return EndSessionResult(
                 success=False,
@@ -214,17 +229,25 @@ class SessionTools:
         result = self.memory.save_session_state(state)
         if result.success:
             saved_to.append("MCP Memory Server")
-        
+        else:
+            logger.warning(f"Memory Server save failed: {result.message}")
+
         # Clear session tracking
         self._session_start = None
         self._current_project = None
         self._current_user = None
-        
+
+        duration_str = self._format_duration(duration)
+        if saved_to:
+            message = f"セッション状態を保存しました。（所要時間: {duration_str}）"
+        else:
+            message = f"セッションを終了しました。（所要時間: {duration_str}）（状態は永続化されていません）"
+
         return EndSessionResult(
             success=True,
             session_duration=duration,
             saved_to=saved_to,
-            message=f"セッション状態を保存しました。（所要時間: {self._format_duration(duration)}）",
+            message=message,
         )
 
     def save_session(
@@ -247,28 +270,23 @@ class SessionTools:
             current_phase: Update current phase
             current_task: Update current task
             user: User ID (uses default if None)
-            
+
         Returns:
             SaveSessionResult
         """
         user = user or self._current_user or self.user_name
-        project = self._current_project
-        
-        if not project:
-            current = self.memory.get_current_project(user)
-            if current:
-                project = current.project_id
-        
+        project = self._get_current_project(user)
+
         if not project:
             return SaveSessionResult(
                 success=False,
                 saved_to=[],
                 message="アクティブなプロジェクトがありません。",
             )
-        
+
         # Load existing state
         existing_state = self.memory.get_session_state(project, user)
-        
+
         # Build updated state
         state = SessionState(
             project=project,
@@ -287,11 +305,18 @@ class SessionTools:
         result = self.memory.save_session_state(state)
         if result.success:
             saved_to.append("MCP Memory Server")
-        
+        else:
+            logger.warning(f"Memory Server save failed: {result.message}")
+
+        if saved_to:
+            message = "セッション状態を保存しました。"
+        else:
+            message = "セッション状態を更新しました。（永続化されていません - Memory Serverの接続を確認してください）"
+
         return SaveSessionResult(
             success=True,
             saved_to=saved_to,
-            message="セッション状態を保存しました。",
+            message=message,
         )
 
     def update_progress(
@@ -310,25 +335,20 @@ class SessionTools:
             completed_task: Task that was just completed
             blockers: Updated blockers
             user: User ID
-            
+
         Returns:
             SaveSessionResult
         """
         user = user or self._current_user or self.user_name
-        project = self._current_project
-        
-        if not project:
-            current = self.memory.get_current_project(user)
-            if current:
-                project = current.project_id
-        
+        project = self._get_current_project(user)
+
         if not project:
             return SaveSessionResult(
                 success=False,
                 saved_to=[],
                 message="アクティブなプロジェクトがありません。",
             )
-        
+
         # Load existing state
         existing_state = self.memory.get_session_state(project, user)
         
@@ -352,11 +372,18 @@ class SessionTools:
         result = self.memory.save_session_state(state)
         if result.success:
             saved_to.append("MCP Memory Server")
-        
+        else:
+            logger.warning(f"Memory Server save failed: {result.message}")
+
+        if saved_to:
+            message = "進捗を更新しました。"
+        else:
+            message = "進捗を更新しました。（永続化されていません）"
+
         return SaveSessionResult(
             success=True,
             saved_to=saved_to,
-            message="進捗を更新しました。",
+            message=message,
         )
 
     def _get_recommended_docs(

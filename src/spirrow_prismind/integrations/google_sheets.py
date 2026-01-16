@@ -236,6 +236,22 @@ class GoogleSheetsClient:
         info = self.get_spreadsheet_info(spreadsheet_id)
         return [sheet["properties"]["title"] for sheet in info.get("sheets", [])]
 
+    def sheet_exists(self, spreadsheet_id: str, sheet_name: str) -> bool:
+        """Check if a sheet exists in the spreadsheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_name: Name of the sheet to check
+
+        Returns:
+            True if the sheet exists, False otherwise
+        """
+        try:
+            sheet_names = self.get_sheet_names(spreadsheet_id)
+            return sheet_name in sheet_names
+        except Exception:
+            return False
+
     def find_row_by_value(
         self,
         spreadsheet_id: str,
