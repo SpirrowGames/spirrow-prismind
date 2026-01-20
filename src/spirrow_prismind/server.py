@@ -42,7 +42,7 @@ TOOLS = [
     # Setup Wizard
     Tool(
         name="get_setup_status",
-        description="Spirrow-Prismindの設定状況を確認します。必須設定とオプション設定の一覧、設定済み/未設定の状態を表示します。",
+        description="Get the configuration status of Spirrow-Prismind. Shows required and optional settings with their configured/unconfigured state.",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -50,17 +50,17 @@ TOOLS = [
     ),
     Tool(
         name="configure",
-        description="Spirrow-Prismindの設定を変更します。config.tomlに設定を書き込みます。",
+        description="Update Spirrow-Prismind configuration. Writes settings to config.toml.",
         inputSchema={
             "type": "object",
             "properties": {
                 "setting": {
                     "type": "string",
-                    "description": "設定名（例: google.credentials_path, services.memory_server_url, session.user_name）",
+                    "description": "Setting name (e.g., google.credentials_path, services.memory_server_url, session.user_name)",
                 },
                 "value": {
                     "type": "string",
-                    "description": "設定値",
+                    "description": "Setting value",
                 },
             },
             "required": ["setting", "value"],
@@ -68,13 +68,13 @@ TOOLS = [
     ),
     Tool(
         name="check_services_status",
-        description="RAGサーバーとMemoryサーバーの接続状態を確認します。サーバーが利用可能かどうか、コレクション/スキーマの自動作成状態も確認できます。detailed=trueでプロトコル、レイテンシ等の詳細情報を取得できます。",
+        description="Check connection status of RAG and Memory servers. Verifies server availability and collection/schema auto-creation status. Use detailed=true for protocol, latency, and other detailed info.",
         inputSchema={
             "type": "object",
             "properties": {
                 "detailed": {
                     "type": "boolean",
-                    "description": "詳細情報を取得するか（protocol, latency_ms, last_checked）",
+                    "description": "Get detailed info (protocol, latency_ms, last_checked)",
                     "default": False,
                 },
             },
@@ -82,7 +82,7 @@ TOOLS = [
     ),
     Tool(
         name="get_connection_info",
-        description="現在の接続情報を取得します。Memory Server、RAG Server、Googleサービスの接続状態、レイテンシ、バージョン情報を表示します。",
+        description="Get current connection information. Shows connection status, latency, and version info for Memory Server, RAG Server, and Google services.",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -90,7 +90,7 @@ TOOLS = [
     ),
     Tool(
         name="export_server_config",
-        description="チームで共有可能なサーバー設定をエクスポートします。機密情報（パス）を除いたTOML形式で出力します。",
+        description="Export server configuration for team sharing. Outputs in TOML format excluding sensitive information (paths).",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -98,13 +98,13 @@ TOOLS = [
     ),
     Tool(
         name="import_server_config",
-        description="共有されたサーバー設定をインポートします。設定の検証を行い、エラーがあれば報告します。",
+        description="Import shared server configuration. Validates settings and reports any errors.",
         inputSchema={
             "type": "object",
             "properties": {
                 "config": {
                     "type": "string",
-                    "description": "TOML形式の設定内容",
+                    "description": "Configuration content in TOML format",
                 },
             },
             "required": ["config"],
@@ -113,73 +113,73 @@ TOOLS = [
     # Session Management
     Tool(
         name="start_session",
-        description="セッションを開始し、保存されていた状態を読み込みます。プロジェクトを指定しない場合は現在のプロジェクトを使用します。",
+        description="Start a session and load saved state. Uses current project if project is not specified.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID（省略時は現在のプロジェクト）",
+                    "description": "Project ID (uses current project if omitted)",
                 },
             },
         },
     ),
     Tool(
         name="end_session",
-        description="セッションを終了し、状態を保存します。",
+        description="End the session and save state.",
         inputSchema={
             "type": "object",
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "このセッションの作業サマリ",
+                    "description": "Work summary for this session",
                 },
                 "next_action": {
                     "type": "string",
-                    "description": "次にやるべきこと",
+                    "description": "Next action to take",
                 },
                 "blockers": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "ブロッカー（障害）のリスト",
+                    "description": "List of blockers (obstacles)",
                 },
                 "notes": {
                     "type": "string",
-                    "description": "次回セッションへのメモ",
+                    "description": "Notes for the next session",
                 },
             },
         },
     ),
     Tool(
         name="save_session",
-        description="セッション状態を保存します（終了せずに保存）。",
+        description="Save session state without ending the session.",
         inputSchema={
             "type": "object",
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "作業サマリ",
+                    "description": "Work summary",
                 },
                 "next_action": {
                     "type": "string",
-                    "description": "次にやるべきこと",
+                    "description": "Next action to take",
                 },
                 "blockers": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "ブロッカーのリスト",
+                    "description": "List of blockers",
                 },
                 "notes": {
                     "type": "string",
-                    "description": "メモ",
+                    "description": "Notes",
                 },
                 "current_phase": {
                     "type": "string",
-                    "description": "現在のフェーズ",
+                    "description": "Current phase",
                 },
                 "current_task": {
                     "type": "string",
-                    "description": "現在のタスク",
+                    "description": "Current task",
                 },
             },
         },
@@ -187,43 +187,43 @@ TOOLS = [
     # Project Management
     Tool(
         name="setup_project",
-        description="新しいプロジェクトをセットアップします。spreadsheet_idとroot_folder_idを省略すると、config.tomlのprojects_folder_id配下に自動作成します。",
+        description="Set up a new project. If spreadsheet_id and root_folder_id are omitted, automatically creates them under the projects_folder_id configured in config.toml.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID（英数字）",
+                    "description": "Project ID (alphanumeric)",
                 },
                 "name": {
                     "type": "string",
-                    "description": "プロジェクト表示名",
+                    "description": "Project display name",
                 },
                 "spreadsheet_id": {
                     "type": "string",
-                    "description": "Google Sheets ID（省略時は自動作成）",
+                    "description": "Google Sheets ID (auto-created if omitted)",
                 },
                 "root_folder_id": {
                     "type": "string",
-                    "description": "Google Drive ルートフォルダID（省略時は自動作成）",
+                    "description": "Google Drive root folder ID (auto-created if omitted)",
                 },
                 "description": {
                     "type": "string",
-                    "description": "プロジェクトの説明",
+                    "description": "Project description",
                 },
                 "create_sheets": {
                     "type": "boolean",
-                    "description": "シートを自動作成するか",
+                    "description": "Auto-create sheets",
                     "default": True,
                 },
                 "create_folders": {
                     "type": "boolean",
-                    "description": "フォルダを自動作成するか",
+                    "description": "Auto-create folders",
                     "default": True,
                 },
                 "force": {
                     "type": "boolean",
-                    "description": "確認をスキップして強制作成",
+                    "description": "Skip confirmation and force create",
                     "default": False,
                 },
             },
@@ -232,13 +232,13 @@ TOOLS = [
     ),
     Tool(
         name="switch_project",
-        description="別のプロジェクトに切り替えます。",
+        description="Switch to a different project.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "切り替え先のプロジェクトID",
+                    "description": "Target project ID to switch to",
                 },
             },
             "required": ["project"],
@@ -246,7 +246,7 @@ TOOLS = [
     ),
     Tool(
         name="list_projects",
-        description="登録されているプロジェクト一覧を取得します。",
+        description="Get a list of registered projects.",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -254,29 +254,29 @@ TOOLS = [
     ),
     Tool(
         name="update_project",
-        description="プロジェクト設定を更新します。",
+        description="Update project settings.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID",
+                    "description": "Project ID",
                 },
                 "name": {
                     "type": "string",
-                    "description": "新しい表示名",
+                    "description": "New display name",
                 },
                 "description": {
                     "type": "string",
-                    "description": "新しい説明",
+                    "description": "New description",
                 },
                 "spreadsheet_id": {
                     "type": "string",
-                    "description": "新しいSpreadsheet ID",
+                    "description": "New Spreadsheet ID",
                 },
                 "root_folder_id": {
                     "type": "string",
-                    "description": "新しいルートフォルダID",
+                    "description": "New root folder ID",
                 },
             },
             "required": ["project"],
@@ -284,17 +284,17 @@ TOOLS = [
     ),
     Tool(
         name="delete_project",
-        description="プロジェクト設定を削除します（実データは残ります）。",
+        description="Delete project settings (actual data is preserved).",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID",
+                    "description": "Project ID",
                 },
                 "confirm": {
                     "type": "boolean",
-                    "description": "削除確認（trueで削除実行）",
+                    "description": "Delete confirmation (true to execute deletion)",
                     "default": False,
                 },
             },
@@ -303,13 +303,13 @@ TOOLS = [
     ),
     Tool(
         name="sync_projects_from_drive",
-        description="Google Driveのprojects_folder_id配下のフォルダ一覧をRAGと同期します。Driveをマスタとして、追加・削除を行います。",
+        description="Sync folder list under projects_folder_id in Google Drive with RAG. Uses Drive as master to add/remove projects.",
         inputSchema={
             "type": "object",
             "properties": {
                 "dry_run": {
                     "type": "boolean",
-                    "description": "trueの場合、実際の変更は行わず差分のみ報告",
+                    "description": "If true, only report differences without making actual changes",
                     "default": False,
                 },
             },
@@ -318,59 +318,59 @@ TOOLS = [
     # Document Operations
     Tool(
         name="get_document",
-        description="ドキュメントを検索・取得します。",
+        description="Search and retrieve a document.",
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "検索クエリ",
+                    "description": "Search query",
                 },
                 "doc_id": {
                     "type": "string",
-                    "description": "ドキュメントID（直接指定）",
+                    "description": "Document ID (direct specification)",
                 },
                 "doc_type": {
                     "type": "string",
-                    "description": "ドキュメント種別フィルタ",
+                    "description": "Document type filter",
                 },
                 "phase_task": {
                     "type": "string",
-                    "description": "フェーズタスクフィルタ（例: P4-T01）",
+                    "description": "Phase-task filter (e.g., P4-T01)",
                 },
             },
         },
     ),
     Tool(
         name="create_document",
-        description="新しいドキュメントを作成し、目録に登録します。",
+        description="Create a new document and register it in the catalog.",
         inputSchema={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "ドキュメント名",
+                    "description": "Document name",
                 },
                 "doc_type": {
                     "type": "string",
-                    "description": "ドキュメント種別（設計書/実装手順書/etc.）",
+                    "description": "Document type (design_doc/implementation_guide/etc.)",
                 },
                 "content": {
                     "type": "string",
-                    "description": "ドキュメント内容",
+                    "description": "Document content",
                 },
                 "phase_task": {
                     "type": "string",
-                    "description": "フェーズタスク（例: P4-T01）",
+                    "description": "Phase-task (e.g., P4-T01)",
                 },
                 "feature": {
                     "type": "string",
-                    "description": "フィーチャー名",
+                    "description": "Feature name",
                 },
                 "keywords": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "検索キーワード",
+                    "description": "Search keywords",
                 },
             },
             "required": ["name", "doc_type", "content", "phase_task"],
@@ -378,21 +378,21 @@ TOOLS = [
     ),
     Tool(
         name="update_document",
-        description="ドキュメントを更新します。",
+        description="Update a document.",
         inputSchema={
             "type": "object",
             "properties": {
                 "doc_id": {
                     "type": "string",
-                    "description": "ドキュメントID",
+                    "description": "Document ID",
                 },
                 "content": {
                     "type": "string",
-                    "description": "新しい内容",
+                    "description": "New content",
                 },
                 "append": {
                     "type": "boolean",
-                    "description": "追記するか（falseで置換）",
+                    "description": "Append mode (false to replace)",
                     "default": False,
                 },
             },
@@ -402,7 +402,7 @@ TOOLS = [
     # Document Type Management
     Tool(
         name="list_document_types",
-        description="利用可能なドキュメントタイプ一覧を取得します。ビルトインタイプ（設計書、実装手順書）とプロジェクト固有のカスタムタイプを返します。",
+        description="Get a list of available document types. Returns both built-in types (design_doc, implementation_guide) and project-specific custom types.",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -410,38 +410,38 @@ TOOLS = [
     ),
     Tool(
         name="register_document_type",
-        description="新しいドキュメントタイプを登録します。プロジェクト固有のカスタムドキュメントタイプを追加できます。",
+        description="Register a new document type. Add project-specific custom document types.",
         inputSchema={
             "type": "object",
             "properties": {
                 "type_id": {
                     "type": "string",
-                    "description": "タイプID（英数字とアンダースコア、例: meeting_notes）",
+                    "description": "Type ID (alphanumeric and underscore, e.g., meeting_notes)",
                 },
                 "name": {
                     "type": "string",
-                    "description": "表示名（例: 議事録）",
+                    "description": "Display name (e.g., Meeting Notes)",
                 },
                 "folder_name": {
                     "type": "string",
-                    "description": "Google Drive内のフォルダ名",
+                    "description": "Folder name in Google Drive",
                 },
                 "template_doc_id": {
                     "type": "string",
-                    "description": "テンプレートのGoogle Docs ID（省略可）",
+                    "description": "Google Docs template ID (optional)",
                 },
                 "description": {
                     "type": "string",
-                    "description": "ドキュメントタイプの説明",
+                    "description": "Document type description",
                 },
                 "fields": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "カスタムメタデータフィールド",
+                    "description": "Custom metadata fields",
                 },
                 "create_folder": {
                     "type": "boolean",
-                    "description": "フォルダを自動作成するか",
+                    "description": "Auto-create folder",
                     "default": True,
                 },
             },
@@ -450,13 +450,13 @@ TOOLS = [
     ),
     Tool(
         name="delete_document_type",
-        description="カスタムドキュメントタイプを削除します。ビルトインタイプは削除できません。",
+        description="Delete a custom document type. Built-in types cannot be deleted.",
         inputSchema={
             "type": "object",
             "properties": {
                 "type_id": {
                     "type": "string",
-                    "description": "削除するタイプID",
+                    "description": "Type ID to delete",
                 },
             },
             "required": ["type_id"],
@@ -465,29 +465,29 @@ TOOLS = [
     # Catalog Operations
     Tool(
         name="search_catalog",
-        description="目録を検索します。",
+        description="Search the document catalog.",
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "検索クエリ",
+                    "description": "Search query",
                 },
                 "doc_type": {
                     "type": "string",
-                    "description": "ドキュメント種別フィルタ",
+                    "description": "Document type filter",
                 },
                 "phase_task": {
                     "type": "string",
-                    "description": "フェーズタスクフィルタ",
+                    "description": "Phase-task filter",
                 },
                 "feature": {
                     "type": "string",
-                    "description": "フィーチャーフィルタ",
+                    "description": "Feature filter",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "最大件数",
+                    "description": "Maximum number of results",
                     "default": 10,
                 },
             },
@@ -495,13 +495,13 @@ TOOLS = [
     ),
     Tool(
         name="sync_catalog",
-        description="Google Sheetsの目録をRAGキャッシュに同期します。",
+        description="Sync the catalog from Google Sheets to RAG cache.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID（省略時は現在のプロジェクト）",
+                    "description": "Project ID (uses current project if omitted)",
                 },
             },
         },
@@ -509,30 +509,30 @@ TOOLS = [
     # Knowledge Operations
     Tool(
         name="add_knowledge",
-        description="知見をRAGに登録します。",
+        description="Add a knowledge entry to RAG. Store insights, tips, best practices, and lessons learned.",
         inputSchema={
             "type": "object",
             "properties": {
                 "content": {
                     "type": "string",
-                    "description": "知見の内容",
+                    "description": "Knowledge content",
                 },
                 "category": {
                     "type": "string",
-                    "description": "カテゴリ（問題解決/技術Tips/ベストプラクティス/落とし穴/設計パターン/その他）",
+                    "description": "Category (problem_solving/tech_tips/best_practices/pitfalls/design_patterns/other)",
                 },
                 "project": {
                     "type": "string",
-                    "description": "関連プロジェクト（省略で汎用知見）",
+                    "description": "Related project (omit for general knowledge)",
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "検索タグ",
+                    "description": "Search tags",
                 },
                 "source": {
                     "type": "string",
-                    "description": "情報源",
+                    "description": "Information source",
                 },
             },
             "required": ["content", "category"],
@@ -540,35 +540,35 @@ TOOLS = [
     ),
     Tool(
         name="search_knowledge",
-        description="知見を検索します。",
+        description="Search knowledge entries. Find relevant insights, tips, and lessons learned.",
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "検索クエリ",
+                    "description": "Search query",
                 },
                 "category": {
                     "type": "string",
-                    "description": "カテゴリフィルタ",
+                    "description": "Category filter",
                 },
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトフィルタ",
+                    "description": "Project filter",
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "タグフィルタ（AND条件）",
+                    "description": "Tag filter (AND condition)",
                 },
                 "include_general": {
                     "type": "boolean",
-                    "description": "汎用知見も含めるか",
+                    "description": "Include general (non-project) knowledge",
                     "default": True,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "最大件数",
+                    "description": "Maximum number of results",
                     "default": 5,
                 },
             },
@@ -577,30 +577,30 @@ TOOLS = [
     ),
     Tool(
         name="update_knowledge",
-        description="既存の知見を更新します。",
+        description="Update an existing knowledge entry.",
         inputSchema={
             "type": "object",
             "properties": {
                 "knowledge_id": {
                     "type": "string",
-                    "description": "更新する知見のID",
+                    "description": "Knowledge entry ID to update",
                 },
                 "content": {
                     "type": "string",
-                    "description": "新しい内容（省略時は変更なし）",
+                    "description": "New content (omit to keep unchanged)",
                 },
                 "category": {
                     "type": "string",
-                    "description": "新しいカテゴリ（省略時は変更なし）",
+                    "description": "New category (omit to keep unchanged)",
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "新しいタグ（省略時は変更なし）",
+                    "description": "New tags (omit to keep unchanged)",
                 },
                 "source": {
                     "type": "string",
-                    "description": "新しい情報源（省略時は変更なし）",
+                    "description": "New source (omit to keep unchanged)",
                 },
             },
             "required": ["knowledge_id"],
@@ -609,51 +609,51 @@ TOOLS = [
     # Progress Management
     Tool(
         name="get_progress",
-        description="プロジェクトの進捗状況をGoogle Sheetsから取得します。",
+        description="Get project progress from Google Sheets.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID（省略時は現在のプロジェクト）",
+                    "description": "Project ID (uses current project if omitted)",
                 },
                 "phase": {
                     "type": "string",
-                    "description": "フェーズフィルタ（省略時は全フェーズ）",
+                    "description": "Phase filter (omit for all phases)",
                 },
             },
         },
     ),
     Tool(
         name="update_task_status",
-        description="タスクのステータスをGoogle Sheetsで更新します。",
+        description="Update task status in Google Sheets.",
         inputSchema={
             "type": "object",
             "properties": {
                 "task_id": {
                     "type": "string",
-                    "description": "タスクID（例: T01）",
+                    "description": "Task ID (e.g., T01)",
                 },
                 "status": {
                     "type": "string",
-                    "description": "新しいステータス（not_started/in_progress/completed/blocked）",
+                    "description": "New status (not_started/in_progress/completed/blocked)",
                 },
                 "phase": {
                     "type": "string",
-                    "description": "フェーズ名（タスクIDが曖昧な場合に指定）",
+                    "description": "Phase name (specify when task_id is ambiguous)",
                 },
                 "blockers": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "ブロッカーリスト",
+                    "description": "Blocker list",
                 },
                 "notes": {
                     "type": "string",
-                    "description": "備考",
+                    "description": "Notes",
                 },
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID",
+                    "description": "Project ID",
                 },
             },
             "required": ["task_id", "status"],
@@ -661,29 +661,29 @@ TOOLS = [
     ),
     Tool(
         name="add_task",
-        description="進捗シートに新しいタスクを追加します。",
+        description="Add a new task to the progress sheet.",
         inputSchema={
             "type": "object",
             "properties": {
                 "phase": {
                     "type": "string",
-                    "description": "フェーズ名（例: Phase 4）",
+                    "description": "Phase name (e.g., Phase 4)",
                 },
                 "task_id": {
                     "type": "string",
-                    "description": "タスクID（例: T01）",
+                    "description": "Task ID (e.g., T01)",
                 },
                 "name": {
                     "type": "string",
-                    "description": "タスク名",
+                    "description": "Task name",
                 },
                 "description": {
                     "type": "string",
-                    "description": "タスクの説明",
+                    "description": "Task description",
                 },
                 "project": {
                     "type": "string",
-                    "description": "プロジェクトID",
+                    "description": "Project ID",
                 },
             },
             "required": ["phase", "task_id", "name"],
