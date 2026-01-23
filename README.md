@@ -131,3 +131,5 @@ ruff check --fix .
 ## License
 
 MIT License - SpirrowGames
+
+詳細は [LICENSE](LICENSE) ファイルを参照してください。
