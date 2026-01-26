@@ -278,6 +278,24 @@ TOOLS = [
                     "type": "string",
                     "description": "New root folder ID",
                 },
+                "status": {
+                    "type": "string",
+                    "description": "Project status (active, archived, etc.)",
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Project categories list",
+                },
+                "phases": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Project phases list",
+                },
+                "template": {
+                    "type": "string",
+                    "description": "Template type (game, mcp-server, web-app, etc.)",
+                },
             },
             "required": ["project"],
         },
@@ -1232,6 +1250,10 @@ class PrismindServer:
                 description=args.get("description"),
                 spreadsheet_id=args.get("spreadsheet_id"),
                 root_folder_id=args.get("root_folder_id"),
+                status=args.get("status"),
+                categories=args.get("categories"),
+                phases=args.get("phases"),
+                template=args.get("template"),
             )
             return {
                 "success": result.success,

@@ -58,6 +58,12 @@ class ProjectConfig:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
+    # Extended fields for Magickit integration
+    status: str = "active"  # active, archived, etc.
+    categories: list[str] = field(default_factory=list)  # Project categories
+    phases: list[str] = field(default_factory=list)  # Project phases
+    template: str = ""  # Template type (game, mcp-server, web-app, etc.)
+
     def to_rag_document(self) -> dict:
         """Convert to RAG document format for storage."""
         return {
@@ -90,6 +96,11 @@ class ProjectConfig:
                 "document_types": self.document_types,
                 "created_at": self.created_at.isoformat(),
                 "updated_at": self.updated_at.isoformat(),
+                # Extended fields for Magickit
+                "status": self.status,
+                "categories": self.categories,
+                "phases": self.phases,
+                "template": self.template,
             },
         }
 
@@ -150,6 +161,11 @@ class ProjectConfig:
             document_types=parse_json_field(metadata.get("document_types"), []),
             created_at=created_at,
             updated_at=updated_at,
+            # Extended fields for Magickit
+            status=metadata.get("status", "active"),
+            categories=parse_json_field(metadata.get("categories"), []),
+            phases=parse_json_field(metadata.get("phases"), []),
+            template=metadata.get("template", ""),
         )
 
 

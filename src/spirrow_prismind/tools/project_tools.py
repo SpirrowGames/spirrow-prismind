@@ -686,16 +686,24 @@ class ProjectTools:
         description: Optional[str] = None,
         spreadsheet_id: Optional[str] = None,
         root_folder_id: Optional[str] = None,
+        status: Optional[str] = None,
+        categories: Optional[list[str]] = None,
+        phases: Optional[list[str]] = None,
+        template: Optional[str] = None,
     ) -> UpdateProjectResult:
         """Update project settings.
-        
+
         Args:
             project: Project identifier
             name: New display name (None to keep)
             description: New description (None to keep)
             spreadsheet_id: New Sheets ID (None to keep)
             root_folder_id: New Drive folder ID (None to keep)
-            
+            status: Project status (active, archived, etc.)
+            categories: Project categories list
+            phases: Project phases list
+            template: Template type (game, mcp-server, web-app, etc.)
+
         Returns:
             UpdateProjectResult
         """
@@ -729,6 +737,23 @@ class ProjectTools:
         if root_folder_id is not None and root_folder_id != meta.get("root_folder_id"):
             updated_fields.append("root_folder_id")
 
+        # Extended fields for Magickit
+        new_status = status if status is not None else meta.get("status", "active")
+        if status is not None and status != meta.get("status"):
+            updated_fields.append("status")
+
+        new_categories = categories if categories is not None else meta.get("categories", [])
+        if categories is not None and categories != meta.get("categories"):
+            updated_fields.append("categories")
+
+        new_phases = phases if phases is not None else meta.get("phases", [])
+        if phases is not None and phases != meta.get("phases"):
+            updated_fields.append("phases")
+
+        new_template = template if template is not None else meta.get("template", "")
+        if template is not None and template != meta.get("template"):
+            updated_fields.append("template")
+
         if not updated_fields:
             return UpdateProjectResult(
                 success=True,
@@ -745,6 +770,11 @@ class ProjectTools:
             "drive": meta.get("drive", {}),
             "options": meta.get("options", {}),
             "created_at": meta.get("created_at", datetime.now().isoformat()),
+            # Extended fields for Magickit
+            "status": new_status,
+            "categories": new_categories,
+            "phases": new_phases,
+            "template": new_template,
         }
 
         success, save_warning = self._save_project_config_with_fallback(
