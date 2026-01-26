@@ -176,6 +176,7 @@ class ProjectSummary:
     name: str
     description: str
     updated_at: datetime
+    status: str = "active"  # active, archived, etc.
 
 
 @dataclass

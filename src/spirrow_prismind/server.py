@@ -1236,6 +1236,7 @@ class PrismindServer:
                         "name": p.name,
                         "description": p.description,
                         "updated_at": p.updated_at.isoformat(),
+                        "status": p.status,
                     }
                     for p in result.projects
                 ],

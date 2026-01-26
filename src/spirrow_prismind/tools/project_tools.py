@@ -117,21 +117,13 @@ class ProjectTools:
     # ===== Fallback Storage Helpers =====
 
     def _get_project_config_with_fallback(self, project: str) -> Optional[RAGDocument]:
-        """Get project config from RAG or fallback storage.
+        """Get project config from fallback storage or RAG.
 
-        RAG is optional - if RAG fails, falls back to file storage.
+        Prefers fallback storage when project exists there, since fallback always
+        contains the latest updates (RAG upsert may fail).
+        Falls back to RAG for projects not yet in fallback storage.
         """
-        # Try RAG first if available
-        if self.rag.is_available:
-            try:
-                result = self.rag.get_project_config(project)
-                if result:
-                    return result
-                # Not found in RAG, try fallback
-            except Exception as e:
-                logger.warning(f"RAG get failed for project '{project}': {e}. Trying fallback storage.")
-
-        # Fallback to file storage
+        # Check fallback storage first (contains latest updates)
         data = ProjectTools._fallback_projects.get(project)
         if data:
             return RAGDocument(
@@ -139,6 +131,16 @@ class ProjectTools:
                 content=f"{data.get('name', '')} - {data.get('description', '')}",
                 metadata=data,
             )
+
+        # Try RAG if not found in fallback
+        if self.rag.is_available:
+            try:
+                result = self.rag.get_project_config(project)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning(f"RAG get failed for project '{project}': {e}")
+
         return None
 
     def _save_project_config_with_fallback(
@@ -203,11 +205,13 @@ class ProjectTools:
     def _list_projects_with_fallback(self) -> list[RAGDocument]:
         """List projects from RAG and fallback storage.
 
-        Merges results from both sources, preferring RAG data when available.
+        Merges results from both sources, preferring fallback data when both exist
+        (since fallback always contains the latest updates when RAG updates fail).
         RAG is optional - if RAG fails, returns only fallback storage projects.
         """
         docs: list[RAGDocument] = []
         seen_ids: set[str] = set()
+        rag_docs_by_id: dict[str, RAGDocument] = {}
 
         # Try RAG first if available
         if self.rag.is_available:
@@ -216,19 +220,24 @@ class ProjectTools:
                 for doc in rag_docs:
                     project_id = doc.metadata.get("project_id", "")
                     if project_id:
-                        seen_ids.add(project_id)
-                    docs.append(doc)
+                        rag_docs_by_id[project_id] = doc
             except Exception as e:
                 logger.warning(f"RAG list_projects failed: {e}. Using fallback storage only.")
 
-        # Add projects from fallback that aren't in RAG
+        # Process all projects, preferring fallback data when both exist
+        # (fallback always has the latest updates since RAG upsert may fail)
         for project_id, data in ProjectTools._fallback_projects.items():
+            seen_ids.add(project_id)
+            docs.append(RAGDocument(
+                doc_id=f"project:{project_id}",
+                content=f"{data.get('name', '')} - {data.get('description', '')}",
+                metadata=data,
+            ))
+
+        # Add RAG-only projects (not in fallback)
+        for project_id, doc in rag_docs_by_id.items():
             if project_id not in seen_ids:
-                docs.append(RAGDocument(
-                    doc_id=f"project:{project_id}",
-                    content=f"{data.get('name', '')} - {data.get('description', '')}",
-                    metadata=data,
-                ))
+                docs.append(doc)
 
         return docs
 
@@ -659,6 +668,7 @@ class ProjectTools:
                 name=meta.get("name", ""),
                 description=meta.get("description", ""),
                 updated_at=updated_at,
+                status=meta.get("status", "active"),
             ))
 
         # Sort by updated_at descending

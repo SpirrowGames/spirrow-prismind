@@ -57,3 +57,7 @@ logs/
 # Temp files
 tmpclaude-*
 start.sh
+
+# Local storage fallback files
+.prismind_memory_cache.json
+.prismind_projects.json

@@ -286,6 +286,38 @@ class RAGClient:
                 message=str(e),
             )
 
+    def upsert_document(
+        self,
+        doc_id: str,
+        content: str,
+        metadata: Optional[dict[str, Any]] = None,
+        collection: Optional[str] = None,
+    ) -> RAGOperationResult:
+        """Insert or update a document in the RAG store.
+
+        If the document exists, it will be updated. Otherwise, it will be added.
+
+        Args:
+            doc_id: Document ID
+            content: Document content
+            metadata: Document metadata
+            collection: Collection name (uses default if None)
+
+        Returns:
+            RAGOperationResult
+        """
+        # Check if document exists
+        existing = self.get_document(doc_id, collection)
+
+        if existing:
+            # Update existing document
+            logger.debug(f"Document exists, updating: id={doc_id}")
+            return self.update_document(doc_id, content, metadata, collection)
+        else:
+            # Add new document
+            logger.debug(f"Document does not exist, adding: id={doc_id}")
+            return self.add_document(doc_id, content, metadata, collection)
+
     def delete_document(
         self,
         doc_id: str,
@@ -516,8 +548,9 @@ class RAGClient:
             "updated_at": datetime.now().isoformat(),
             **config_data,
         }
-        
-        return self.add_document(doc_id, content, metadata)
+
+        # Use upsert to handle both new and existing projects
+        return self.upsert_document(doc_id, content, metadata)
 
     def get_project_config(self, project_id: str) -> Optional[RAGDocument]:
         """Get a project configuration.
