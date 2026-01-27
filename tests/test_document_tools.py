@@ -14,6 +14,22 @@ class MockDocInfo:
     body_text: str = ""
 
 
+@dataclass
+class MockFileInfo:
+    """Mock file info from Google Drive."""
+    file_id: str
+    name: str
+    mime_type: str = "application/vnd.google-apps.document"
+    parents: list = None
+    web_view_link: str = ""
+    created_time: str = ""
+    modified_time: str = ""
+
+    def __post_init__(self):
+        if self.parents is None:
+            self.parents = []
+
+
 class TestGetDocument:
     """Tests for get_document method."""
 
@@ -156,13 +172,22 @@ class TestCreateDocument:
             create_folders=False,
         )
 
-        # Setup mock
-        mock_docs_client.create_document_with_content.return_value = MockDocInfo(
-            doc_id="new_doc_id",
-            title="New Document",
-            url="https://docs.google.com/new_doc_id",
+        # Setup mock - new implementation uses Drive API to create document
+        mock_drive_client.create_folder_if_not_exists.return_value = (
+            MockFileInfo(
+                file_id="design_folder_id",
+                name="設計書",
+            ),
+            False,  # created=False (folder already exists)
         )
-        mock_drive_client.find_folder_by_name.return_value = None
+        mock_drive_client.create_document.return_value = MockFileInfo(
+            file_id="new_doc_id",
+            name="New Document",
+            web_view_link="https://docs.google.com/document/d/new_doc_id/edit",
+        )
+        # Mock for insert_text and batchUpdate
+        mock_docs_client.insert_text.return_value = True
+        mock_docs_client.service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
 
         result = document_tools.create_document(
             name="New Document",
@@ -177,6 +202,11 @@ class TestCreateDocument:
         assert result.doc_id == "new_doc_id"
         assert result.name == "New Document"
         assert "作成しました" in result.message
+        # Verify the document was created in the correct folder
+        mock_drive_client.create_document.assert_called_once_with(
+            name="New Document",
+            parent_id="design_folder_id",
+        )
 
 
 class TestUpdateDocument:

@@ -905,9 +905,9 @@ class CreateDocumentResult:
 **内部処理フロー：**
 
 1. 現在のプロジェクト設定を取得
-2. Google Docs APIでドキュメント作成
-3. Google Docs APIで内容を書き込み
-4. Drive APIで適切なフォルダに移動（`Projects/{project}/{doc_type}/`）
+2. ドキュメント種別に応じたフォルダを特定（存在しない場合は作成）
+3. Drive APIで正しいフォルダにドキュメントを作成
+4. Docs APIでコンテンツを追加（見出し + 本文）
 5. keywordsが未指定の場合、自動生成（ドキュメント名 + content から抽出）
 6. 目録に登録（Google Sheets）
 7. 目録キャッシュに登録（RAG）
@@ -1243,6 +1243,7 @@ class KnowledgeEntry:
 
 | 日付 | 内容 |
 |------|------|
+| 2025-01-28 | create_documentの内部処理フローを「作成→移動」から「最初から正しいフォルダに作成」に変更 |
 | 2025-01-12 | setup_projectに重複チェック・類似プロジェクト検索機能追加 |
 | 2025-01-12 | プロジェクト管理ツール追加、設定管理方式変更、Google Docs API追加 |
 | 2025-01-12 | ツール設計追加（11ツール） |

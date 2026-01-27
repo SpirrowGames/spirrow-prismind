@@ -238,17 +238,9 @@ class DocumentTools:
             )
         
         try:
-            # Step 1: Create document in Google Docs
-            doc_info = self.docs.create_document_with_content(
-                title=name,
-                content=content,
-                heading=name,
-            )
+            # Step 1: Determine target folder
+            target_folder_id = config.root_folder_id  # Default to project root
 
-            doc_id = doc_info.doc_id
-            doc_url = doc_info.url
-
-            # Step 2: Determine folder based on document type
             folder_name = ""
             doc_type_obj = self.get_document_type(doc_type, user=user)
             if doc_type_obj:
@@ -258,21 +250,49 @@ class DocumentTools:
                 folder_key = self.DOC_TYPE_FOLDERS.get(doc_type, "design_folder")
                 folder_name = getattr(config.drive, folder_key, "")
 
-            if folder_name:
-                # Find or create the folder
-                folder_info = self.drive.find_folder_by_name(
+            if folder_name and config.root_folder_id:
+                # Find or create the subfolder
+                folder_info, created = self.drive.create_folder_if_not_exists(
                     name=folder_name,
                     parent_id=config.root_folder_id,
                 )
-                
                 if folder_info:
-                    self.drive.move_file(doc_id, folder_info.file_id)
-            
-            # Step 3: Auto-generate keywords if not provided
+                    target_folder_id = folder_info.file_id
+                    if created:
+                        logger.info(f"Created folder '{folder_name}' in project folder")
+
+            # Step 2: Create document in the correct folder using Drive API
+            file_info = self.drive.create_document(
+                name=name,
+                parent_id=target_folder_id,
+            )
+            doc_id = file_info.file_id
+            doc_url = file_info.web_view_link or f"https://docs.google.com/document/d/{doc_id}/edit"
+
+            # Step 3: Add content using Docs API
+            if content:
+                # Add heading first
+                heading_text = name + "\n"
+                self.docs.insert_text(doc_id, heading_text, index=1)
+                # Apply heading style
+                self.docs.service.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={"requests": [{
+                        "updateParagraphStyle": {
+                            "range": {"startIndex": 1, "endIndex": 1 + len(heading_text)},
+                            "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                            "fields": "namedStyleType",
+                        }
+                    }]},
+                ).execute()
+                # Add content after heading
+                self.docs.insert_text(doc_id, content, index=1 + len(heading_text))
+
+            # Step 4: Auto-generate keywords if not provided
             if keywords is None:
                 keywords = self._generate_keywords(name, content, feature)
-            
-            # Step 4: Register in catalog (Sheets)
+
+            # Step 5: Register in catalog (Sheets)
             catalog_registered = False
             catalog_warning = ""
             try:
@@ -296,7 +316,7 @@ class DocumentTools:
                 logger.error(f"Failed to register in Sheets catalog: {e}")
                 catalog_warning = f"目録シートへの登録に失敗しました: {e}"
             
-            # Step 5: Register in RAG cache
+            # Step 6: Register in RAG cache
             self.rag.add_catalog_entry(
                 doc_id=doc_id,
                 name=name,
