@@ -145,3 +145,43 @@ class UpdateDocumentResult:
     doc_id: str = ""
     updated_fields: list[str] = field(default_factory=list)
     message: str = ""
+
+
+@dataclass
+class DeleteDocumentResult:
+    """Result of deleting a document."""
+
+    success: bool
+    doc_id: str = ""
+    project: str = ""
+    catalog_deleted: bool = False  # RAG catalog entry deleted
+    sheet_row_deleted: bool = False  # Sheets catalog row deleted
+    drive_file_deleted: bool = False  # Drive file deleted
+    knowledge_deleted_count: int = 0  # Number of knowledge entries deleted
+    message: str = ""
+
+
+@dataclass
+class DocumentSummary:
+    """Summary of a document for listing."""
+
+    doc_id: str
+    name: str
+    doc_type: str
+    phase_task: str = ""
+    feature: str = ""
+    source: str = ""
+    url: str = ""
+    updated_at: str = ""
+
+
+@dataclass
+class ListDocumentsResult:
+    """Result of listing documents."""
+
+    success: bool
+    documents: list[DocumentSummary] = field(default_factory=list)
+    total_count: int = 0
+    offset: int = 0
+    limit: int = 50
+    message: str = ""

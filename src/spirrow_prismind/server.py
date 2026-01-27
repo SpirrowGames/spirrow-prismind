@@ -418,8 +418,93 @@ TOOLS = [
                     "description": "Append mode (false to replace)",
                     "default": False,
                 },
+                "doc_type": {
+                    "type": "string",
+                    "description": "New document type (moves to corresponding folder)",
+                },
+                "phase_task": {
+                    "type": "string",
+                    "description": "New phase-task value",
+                },
+                "feature": {
+                    "type": "string",
+                    "description": "New feature value",
+                },
             },
             "required": ["doc_id"],
+        },
+    ),
+    Tool(
+        name="delete_document",
+        description="Delete a document and its catalog entries. Requires project name to prevent accidental deletion.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "doc_id": {
+                    "type": "string",
+                    "description": "Document ID to delete",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name (required for safety)",
+                },
+                "delete_drive_file": {
+                    "type": "boolean",
+                    "description": "If true, also delete the Google Drive file",
+                    "default": False,
+                },
+                "soft_delete": {
+                    "type": "boolean",
+                    "description": "If true, move to trash. If false, permanently delete.",
+                    "default": True,
+                },
+            },
+            "required": ["doc_id", "project"],
+        },
+    ),
+    Tool(
+        name="list_documents",
+        description="List documents in a project with filtering and pagination.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
+                },
+                "doc_type": {
+                    "type": "string",
+                    "description": "Filter by document type",
+                },
+                "phase_task": {
+                    "type": "string",
+                    "description": "Filter by phase-task",
+                },
+                "feature": {
+                    "type": "string",
+                    "description": "Filter by feature",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results",
+                    "default": 50,
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Skip first N results",
+                    "default": 0,
+                },
+                "sort_by": {
+                    "type": "string",
+                    "description": "Field to sort by (updated_at, name)",
+                    "default": "updated_at",
+                },
+                "sort_order": {
+                    "type": "string",
+                    "description": "Sort order (asc, desc)",
+                    "default": "desc",
+                },
+            },
         },
     ),
     # Document Type Management
@@ -1161,6 +1246,7 @@ class PrismindServer:
             "setup_project", "switch_project", "list_projects",
             "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
+            "delete_document", "list_documents",
             "list_document_types", "register_document_type", "delete_document_type",
             "search_catalog", "sync_catalog",
             "get_progress", "update_task_status", "add_task",
@@ -1381,15 +1467,75 @@ class PrismindServer:
             }
         
         elif name == "update_document":
+            # Build metadata dict for extended fields
+            metadata = {}
+            if args.get("doc_type"):
+                metadata["doc_type"] = args["doc_type"]
+            if args.get("phase_task"):
+                metadata["phase_task"] = args["phase_task"]
+            if args.get("feature"):
+                metadata["feature"] = args["feature"]
+
             result = self._document_tools.update_document(
                 doc_id=args["doc_id"],
                 content=args.get("content"),
                 append=args.get("append", False),
+                metadata=metadata if metadata else None,
             )
             return {
                 "success": result.success,
                 "doc_id": result.doc_id,
                 "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        elif name == "delete_document":
+            result = self._document_tools.delete_document(
+                doc_id=args["doc_id"],
+                project=args["project"],
+                delete_drive_file=args.get("delete_drive_file", False),
+                soft_delete=args.get("soft_delete", True),
+            )
+            return {
+                "success": result.success,
+                "doc_id": result.doc_id,
+                "project": result.project,
+                "catalog_deleted": result.catalog_deleted,
+                "sheet_row_deleted": result.sheet_row_deleted,
+                "drive_file_deleted": result.drive_file_deleted,
+                "knowledge_deleted_count": result.knowledge_deleted_count,
+                "message": result.message,
+            }
+
+        elif name == "list_documents":
+            result = self._document_tools.list_documents(
+                project=args.get("project"),
+                doc_type=args.get("doc_type"),
+                phase_task=args.get("phase_task"),
+                feature=args.get("feature"),
+                limit=args.get("limit", 50),
+                offset=args.get("offset", 0),
+                sort_by=args.get("sort_by", "updated_at"),
+                sort_order=args.get("sort_order", "desc"),
+            )
+            return {
+                "success": result.success,
+                "documents": [
+                    {
+                        "doc_id": d.doc_id,
+                        "name": d.name,
+                        "doc_type": d.doc_type,
+                        "phase_task": d.phase_task,
+                        "feature": d.feature,
+                        "source": d.source,
+                        "url": d.url,
+                        "updated_at": d.updated_at,
+                    }
+                    for d in result.documents
+                ],
+                "total_count": result.total_count,
+                "offset": result.offset,
+                "limit": result.limit,
                 "message": result.message,
             }
 

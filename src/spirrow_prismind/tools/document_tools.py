@@ -14,12 +14,15 @@ from ..models import (
     BUILTIN_DOCUMENT_TYPES,
     CatalogEntry,
     CreateDocumentResult,
+    DeleteDocumentResult,
     DeleteDocumentTypeResult,
     DocReference,
     Document,
     DocumentResult,
+    DocumentSummary,
     DocumentType,
     ListDocumentTypesResult,
+    ListDocumentsResult,
     RegisterDocumentTypeResult,
     UpdateDocumentResult,
 )
@@ -378,20 +381,20 @@ class DocumentTools:
         user: Optional[str] = None,
     ) -> UpdateDocumentResult:
         """Update a document.
-        
+
         Args:
             doc_id: Document ID
             content: New content (None to keep)
             append: If True, append content. If False, replace.
-            metadata: Metadata updates
+            metadata: Metadata updates (can include doc_type, phase_task, feature)
             user: User ID
-            
+
         Returns:
             UpdateDocumentResult
         """
         user = user or self.user_name
         updated_fields = []
-        
+
         try:
             # Update content if provided
             if content is not None:
@@ -400,7 +403,42 @@ class DocumentTools:
                 else:
                     self.docs.replace_all_text(doc_id, content)
                 updated_fields.append("content")
-            
+
+            # Handle doc_type change - move file to new folder
+            if metadata and "doc_type" in metadata:
+                new_doc_type = metadata["doc_type"]
+                doc_type_obj = self.get_document_type(new_doc_type, user=user)
+
+                if not doc_type_obj:
+                    return UpdateDocumentResult(
+                        success=False,
+                        doc_id=doc_id,
+                        updated_fields=updated_fields,
+                        message=f"ドキュメントタイプ '{new_doc_type}' は登録されていません。",
+                    )
+
+                # Get project config
+                config = self.project_tools.get_project_config(user=user)
+                if config and config.root_folder_id and doc_type_obj.folder_name:
+                    try:
+                        # Ensure target folder exists
+                        folder_info, _ = self.drive.ensure_folder_path(
+                            path=doc_type_obj.folder_name,
+                            parent_id=config.root_folder_id,
+                        )
+                        if folder_info:
+                            # Move the document to the new folder
+                            self.drive.move_file(doc_id, folder_info.file_id)
+                            logger.info(
+                                f"Moved document '{doc_id}' to folder "
+                                f"'{doc_type_obj.folder_name}'"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to move document to new folder: {e}")
+
+                # Update doc_type in metadata (will be stored in the display name)
+                metadata["doc_type"] = doc_type_obj.name
+
             # Update catalog metadata in RAG
             if metadata:
                 # Get existing catalog entry
@@ -408,27 +446,36 @@ class DocumentTools:
                     where={"doc_id": {"$eq": doc_id}},
                     n_results=1,
                 )
-                
+
                 if catalog_result.success and catalog_result.documents:
                     existing = catalog_result.documents[0]
                     updated_meta = {**existing.metadata, **metadata}
                     updated_meta["updated_at"] = datetime.now().isoformat()
-                    
+
                     # Re-add (update) the catalog entry
                     self.rag.update_document(
                         doc_id=existing.doc_id,
                         metadata=updated_meta,
                     )
-                    
+
                     updated_fields.extend(metadata.keys())
-            
+
+                    # Update Sheets catalog if doc_type, phase_task, or feature changed
+                    config = self.project_tools.get_project_config(user=user)
+                    if config and config.spreadsheet_id:
+                        self._update_sheets_catalog_row(
+                            config=config,
+                            doc_id=doc_id,
+                            updates=metadata,
+                        )
+
             # Always update the updated_at timestamp
             if content is not None:
                 catalog_result = self.rag.search_by_metadata(
                     where={"doc_id": {"$eq": doc_id}},
                     n_results=1,
                 )
-                
+
                 if catalog_result.success and catalog_result.documents:
                     existing = catalog_result.documents[0]
                     existing.metadata["updated_at"] = datetime.now().isoformat()
@@ -436,14 +483,14 @@ class DocumentTools:
                         doc_id=existing.doc_id,
                         metadata=existing.metadata,
                     )
-            
+
             return UpdateDocumentResult(
                 success=True,
                 doc_id=doc_id,
                 updated_fields=updated_fields,
                 message=f"ドキュメントを更新しました: {', '.join(updated_fields)}",
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to update document '{doc_id}': {e}")
             return UpdateDocumentResult(
@@ -452,6 +499,72 @@ class DocumentTools:
                 updated_fields=[],
                 message=f"ドキュメントの更新に失敗しました: {e}",
             )
+
+    def _update_sheets_catalog_row(
+        self,
+        config,
+        doc_id: str,
+        updates: dict,
+    ):
+        """Update specific fields in the Sheets catalog row.
+
+        Args:
+            config: Project config
+            doc_id: Document ID
+            updates: Fields to update (doc_type, phase_task, feature)
+        """
+        try:
+            # Find the row by doc_id (column C, index 2)
+            row_number = self.sheets.find_row_by_value(
+                spreadsheet_id=config.spreadsheet_id,
+                sheet_name=config.sheets.catalog,
+                column_index=2,  # ID column
+                value=doc_id,
+            )
+
+            if not row_number:
+                logger.warning(f"Document '{doc_id}' not found in Sheets catalog")
+                return
+
+            # Get current row data
+            range_name = f"{config.sheets.catalog}!A{row_number}:M{row_number}"
+            current_values = self.sheets.get_sheet_values(
+                config.spreadsheet_id, range_name
+            )
+
+            if not current_values or not current_values[0]:
+                return
+
+            row = list(current_values[0])
+            # Extend row if needed
+            while len(row) < 13:
+                row.append("")
+
+            # Column mapping:
+            # 0: name, 1: source, 2: doc_id, 3: doc_type, 4: project,
+            # 5: phase_task, 6: feature, 7: reference_timing, 8: related_docs,
+            # 9: keywords, 10: updated_at, 11: author, 12: status
+
+            if "doc_type" in updates:
+                row[3] = updates["doc_type"]
+            if "phase_task" in updates:
+                row[5] = updates["phase_task"]
+            if "feature" in updates:
+                row[6] = updates["feature"]
+
+            # Update the updated_at field
+            row[10] = datetime.now().strftime("%Y-%m-%d")
+
+            # Write back
+            self.sheets.update_row(
+                spreadsheet_id=config.spreadsheet_id,
+                sheet_name=config.sheets.catalog,
+                row_number=row_number,
+                values=row,
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to update Sheets catalog row: {e}")
 
     def _generate_keywords(
         self,
@@ -813,3 +926,235 @@ class DocumentTools:
                 return doc_type
 
         return None
+
+    def delete_document(
+        self,
+        doc_id: str,
+        project: str,
+        delete_drive_file: bool = False,
+        soft_delete: bool = True,
+        user: Optional[str] = None,
+    ) -> DeleteDocumentResult:
+        """Delete a document and its catalog entries.
+
+        Args:
+            doc_id: Document ID to delete
+            project: Project name (required for safety)
+            delete_drive_file: If True, delete the Drive file
+            soft_delete: If True, move to trash. If False, permanently delete.
+            user: User ID
+
+        Returns:
+            DeleteDocumentResult
+        """
+        user = user or self.user_name
+
+        # Step 1: Verify the document belongs to the specified project
+        catalog_entry = self.rag.get_catalog_entry(doc_id, project)
+        if not catalog_entry:
+            return DeleteDocumentResult(
+                success=False,
+                doc_id=doc_id,
+                project=project,
+                message=f"ドキュメント '{doc_id}' がプロジェクト '{project}' に見つかりません。",
+            )
+
+        # Verify project matches
+        entry_project = catalog_entry.metadata.get("project", "")
+        if entry_project != project:
+            return DeleteDocumentResult(
+                success=False,
+                doc_id=doc_id,
+                project=project,
+                message=f"ドキュメントはプロジェクト '{entry_project}' に属しています。"
+                f"指定されたプロジェクト '{project}' と一致しません。",
+            )
+
+        catalog_deleted = False
+        sheet_row_deleted = False
+        drive_file_deleted = False
+        knowledge_deleted_count = 0
+
+        try:
+            # Step 2: Delete RAG catalog entry
+            rag_result = self.rag.delete_catalog_entry(doc_id, project)
+            catalog_deleted = rag_result.success
+
+            # Step 3: Delete from Google Sheets catalog
+            config = self.project_tools.get_project_config(user=user)
+            if config and config.spreadsheet_id:
+                try:
+                    # Find the row by doc_id (column C, index 2)
+                    row_number = self.sheets.find_row_by_value(
+                        spreadsheet_id=config.spreadsheet_id,
+                        sheet_name=config.sheets.catalog,
+                        column_index=2,  # ID column
+                        value=doc_id,
+                    )
+                    if row_number:
+                        self.sheets.delete_row(
+                            spreadsheet_id=config.spreadsheet_id,
+                            sheet_name=config.sheets.catalog,
+                            row_number=row_number,
+                        )
+                        sheet_row_deleted = True
+                except Exception as e:
+                    logger.warning(f"Failed to delete Sheets row for '{doc_id}': {e}")
+
+            # Step 4: Delete Drive file if requested
+            if delete_drive_file:
+                try:
+                    self.drive.delete_file(doc_id, permanent=not soft_delete)
+                    drive_file_deleted = True
+                except Exception as e:
+                    logger.warning(f"Failed to delete Drive file '{doc_id}': {e}")
+
+            # Step 5: Delete related knowledge entries
+            knowledge_deleted_count = self.rag.delete_knowledge_by_doc_id(doc_id, project)
+
+            message_parts = [f"ドキュメント '{doc_id}' を削除しました。"]
+            if catalog_deleted:
+                message_parts.append("カタログエントリを削除しました。")
+            if sheet_row_deleted:
+                message_parts.append("Sheets目録から削除しました。")
+            if drive_file_deleted:
+                action = "ゴミ箱に移動" if soft_delete else "完全削除"
+                message_parts.append(f"Driveファイルを{action}しました。")
+            if knowledge_deleted_count > 0:
+                message_parts.append(f"{knowledge_deleted_count}件の関連ナレッジを削除しました。")
+
+            return DeleteDocumentResult(
+                success=True,
+                doc_id=doc_id,
+                project=project,
+                catalog_deleted=catalog_deleted,
+                sheet_row_deleted=sheet_row_deleted,
+                drive_file_deleted=drive_file_deleted,
+                knowledge_deleted_count=knowledge_deleted_count,
+                message=" ".join(message_parts),
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to delete document '{doc_id}': {e}")
+            return DeleteDocumentResult(
+                success=False,
+                doc_id=doc_id,
+                project=project,
+                catalog_deleted=catalog_deleted,
+                sheet_row_deleted=sheet_row_deleted,
+                drive_file_deleted=drive_file_deleted,
+                knowledge_deleted_count=knowledge_deleted_count,
+                message=f"ドキュメントの削除に失敗しました: {e}",
+            )
+
+    def list_documents(
+        self,
+        project: Optional[str] = None,
+        doc_type: Optional[str] = None,
+        phase_task: Optional[str] = None,
+        feature: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        sort_by: str = "updated_at",
+        sort_order: str = "desc",
+        user: Optional[str] = None,
+    ) -> ListDocumentsResult:
+        """List documents in a project with filtering and pagination.
+
+        Args:
+            project: Project ID (uses current if None)
+            doc_type: Filter by document type
+            phase_task: Filter by phase-task
+            feature: Filter by feature
+            limit: Maximum number of results
+            offset: Skip first N results
+            sort_by: Field to sort by (updated_at, name)
+            sort_order: Sort order (asc, desc)
+            user: User ID
+
+        Returns:
+            ListDocumentsResult
+        """
+        user = user or self.user_name
+
+        # Get project ID
+        if project:
+            project_id = project
+        else:
+            project_id = self.project_tools.get_current_project_id(user)
+
+        if not project_id:
+            return ListDocumentsResult(
+                success=False,
+                message="プロジェクトが選択されていません。",
+            )
+
+        try:
+            # Build where clause for RAG search
+            where: dict = {
+                "type": {"$eq": "catalog"},
+                "project": {"$eq": project_id},
+            }
+
+            if doc_type:
+                where["doc_type"] = {"$eq": doc_type}
+
+            if phase_task:
+                where["phase_task"] = {"$eq": phase_task}
+
+            if feature:
+                where["feature"] = {"$eq": feature}
+
+            # Search with extra buffer for pagination
+            result = self.rag.search_by_metadata(
+                where=where,
+                n_results=limit + offset + 100,  # Buffer for filtering
+            )
+
+            if not result.success:
+                return ListDocumentsResult(
+                    success=False,
+                    message=f"ドキュメント一覧の取得に失敗しました: {result.message}",
+                )
+
+            # Convert to DocumentSummary objects
+            documents = []
+            for doc in result.documents:
+                meta = doc.metadata
+                documents.append(DocumentSummary(
+                    doc_id=meta.get("doc_id", ""),
+                    name=meta.get("name", ""),
+                    doc_type=meta.get("doc_type", ""),
+                    phase_task=meta.get("phase_task", ""),
+                    feature=meta.get("feature", ""),
+                    source=meta.get("source", ""),
+                    url=meta.get("url", ""),
+                    updated_at=meta.get("updated_at", ""),
+                ))
+
+            # Sort documents
+            reverse = sort_order.lower() == "desc"
+            if sort_by == "name":
+                documents.sort(key=lambda d: d.name, reverse=reverse)
+            else:  # default: updated_at
+                documents.sort(key=lambda d: d.updated_at or "", reverse=reverse)
+
+            # Apply pagination
+            total_count = len(documents)
+            documents = documents[offset:offset + limit]
+
+            return ListDocumentsResult(
+                success=True,
+                documents=documents,
+                total_count=total_count,
+                offset=offset,
+                limit=limit,
+                message=f"{total_count}件のドキュメントが見つかりました。",
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to list documents: {e}")
+            return ListDocumentsResult(
+                success=False,
+                message=f"ドキュメント一覧の取得に失敗しました: {e}",
+            )

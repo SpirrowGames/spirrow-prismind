@@ -4,12 +4,15 @@ from .catalog import CatalogEntry, SearchCatalogResult, SyncCatalogResult
 from .document import (
     BUILTIN_DOCUMENT_TYPES,
     CreateDocumentResult,
+    DeleteDocumentResult,
     DeleteDocumentTypeResult,
     DocReference,
     Document,
     DocumentResult,
+    DocumentSummary,
     DocumentType,
     ListDocumentTypesResult,
+    ListDocumentsResult,
     RegisterDocumentTypeResult,
     UpdateDocumentResult,
 )
@@ -79,12 +82,15 @@ __all__ = [
     # Document
     "BUILTIN_DOCUMENT_TYPES",
     "CreateDocumentResult",
+    "DeleteDocumentResult",
     "DeleteDocumentTypeResult",
     "DocReference",
     "Document",
     "DocumentResult",
+    "DocumentSummary",
     "DocumentType",
     "ListDocumentTypesResult",
+    "ListDocumentsResult",
     "RegisterDocumentTypeResult",
     "UpdateDocumentResult",
     # Knowledge

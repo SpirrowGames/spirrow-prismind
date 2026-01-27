@@ -823,10 +823,10 @@ class RAGClient:
 
     def delete_catalog_entries_by_project(self, project: str) -> int:
         """Delete all catalog entries for a project.
-        
+
         Args:
             project: Project ID
-            
+
         Returns:
             Number of entries deleted
         """
@@ -837,10 +837,78 @@ class RAGClient:
             },
             n_results=1000,
         )
-        
+
         count = 0
         for doc in result.documents:
             if self.delete_document(doc.doc_id).success:
                 count += 1
-        
+
+        return count
+
+    def get_catalog_entry(
+        self,
+        doc_id: str,
+        project: str,
+    ) -> Optional[RAGDocument]:
+        """Get a catalog entry by document ID and project.
+
+        Args:
+            doc_id: Document ID
+            project: Project ID
+
+        Returns:
+            RAGDocument if found, None otherwise
+        """
+        catalog_id = f"catalog:{project}:{doc_id}"
+        return self.get_document(catalog_id)
+
+    def delete_catalog_entry(
+        self,
+        doc_id: str,
+        project: str,
+    ) -> RAGOperationResult:
+        """Delete a catalog entry by document ID and project.
+
+        Args:
+            doc_id: Document ID
+            project: Project ID
+
+        Returns:
+            RAGOperationResult
+        """
+        catalog_id = f"catalog:{project}:{doc_id}"
+        return self.delete_document(catalog_id)
+
+    def delete_knowledge_by_doc_id(
+        self,
+        doc_id: str,
+        project: Optional[str] = None,
+    ) -> int:
+        """Delete knowledge entries associated with a document ID.
+
+        Args:
+            doc_id: Document ID to find related knowledge
+            project: Optional project filter
+
+        Returns:
+            Number of knowledge entries deleted
+        """
+        # Build where clause
+        where: dict[str, Any] = {
+            "type": {"$eq": "knowledge"},
+            "doc_id": {"$eq": doc_id},
+        }
+        if project:
+            where["project"] = {"$eq": project}
+
+        result = self.search_by_metadata(
+            where=where,
+            n_results=1000,
+        )
+
+        count = 0
+        for doc in result.documents:
+            if self.delete_document(doc.doc_id).success:
+                count += 1
+
         return count

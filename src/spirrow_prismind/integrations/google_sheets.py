@@ -516,3 +516,76 @@ class GoogleSheetsClient:
         return self.append_sheet_values(
             spreadsheet_id, range_name, values, value_input_option
         )
+
+    def get_sheet_id_by_name(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+    ) -> Optional[int]:
+        """Get the sheet ID (numeric) by sheet name.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_name: Name of the sheet
+
+        Returns:
+            Sheet ID (numeric) if found, None otherwise
+        """
+        try:
+            info = self.get_spreadsheet_info(spreadsheet_id)
+            for sheet in info.get("sheets", []):
+                if sheet["properties"]["title"] == sheet_name:
+                    return sheet["properties"]["sheetId"]
+            return None
+        except HttpError as e:
+            raise RuntimeError(f"Failed to get sheet ID for '{sheet_name}': {e}")
+
+    def delete_row(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        row_number: int,
+    ) -> bool:
+        """Delete a row from a sheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_name: Name of the sheet
+            row_number: 1-based row number to delete
+
+        Returns:
+            True if successful
+
+        Raises:
+            RuntimeError: If deletion fails
+        """
+        try:
+            # Get the sheet ID
+            sheet_id = self.get_sheet_id_by_name(spreadsheet_id, sheet_name)
+            if sheet_id is None:
+                raise RuntimeError(f"Sheet '{sheet_name}' not found")
+
+            # Delete the row (0-based index for API)
+            request_body = {
+                "requests": [
+                    {
+                        "deleteDimension": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "ROWS",
+                                "startIndex": row_number - 1,  # Convert to 0-based
+                                "endIndex": row_number,
+                            }
+                        }
+                    }
+                ]
+            }
+
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=request_body,
+            ).execute()
+
+            return True
+        except HttpError as e:
+            raise RuntimeError(f"Failed to delete row {row_number}: {e}")

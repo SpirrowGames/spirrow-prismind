@@ -429,3 +429,326 @@ class TestGenerateKeywords:
         # Should only have one "Test" despite appearing multiple times
         test_count = sum(1 for k in keywords if k.lower() == "test")
         assert test_count == 1
+
+
+class TestDeleteDocument:
+    """Tests for delete_document method."""
+
+    def test_delete_document_not_found(self, document_tools, project_tools):
+        """Test delete_document fails when document not found."""
+        project_tools.setup_project(
+            project="delete_proj",
+            name="Delete Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        result = document_tools.delete_document(
+            doc_id="nonexistent_doc",
+            project="delete_proj",
+        )
+
+        assert result.success is False
+        assert "見つかりません" in result.message
+
+    def test_delete_document_wrong_project(
+        self, document_tools, mock_rag_client, project_tools
+    ):
+        """Test delete_document fails when project doesn't match."""
+        # Setup project
+        project_tools.setup_project(
+            project="project_a",
+            name="Project A",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add catalog entry for a different project
+        mock_rag_client.add_catalog_entry(
+            doc_id="doc_in_b",
+            name="Doc in B",
+            doc_type="設計書",
+            project="project_b",
+            phase_task="P1-T01",
+            metadata={},
+        )
+
+        # Try to delete with wrong project
+        result = document_tools.delete_document(
+            doc_id="doc_in_b",
+            project="project_a",  # Wrong project
+        )
+
+        assert result.success is False
+        assert "見つかりません" in result.message
+
+    def test_delete_document_success(
+        self, document_tools, mock_rag_client, mock_sheets_client, project_tools
+    ):
+        """Test successful document deletion."""
+        # Setup project
+        project_tools.setup_project(
+            project="delete_success_proj",
+            name="Delete Success Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add catalog entry
+        mock_rag_client.add_catalog_entry(
+            doc_id="delete_me",
+            name="Delete Me",
+            doc_type="設計書",
+            project="delete_success_proj",
+            phase_task="P1-T01",
+            metadata={"source": "Google Docs"},
+        )
+
+        # Mock sheets operations
+        mock_sheets_client.find_row_by_value.return_value = 5
+        mock_sheets_client.delete_row.return_value = True
+
+        result = document_tools.delete_document(
+            doc_id="delete_me",
+            project="delete_success_proj",
+        )
+
+        assert result.success is True
+        assert result.catalog_deleted is True
+        assert "削除しました" in result.message
+
+    def test_delete_document_with_drive_file(
+        self, document_tools, mock_rag_client, mock_drive_client, project_tools
+    ):
+        """Test document deletion including Drive file."""
+        # Setup project
+        project_tools.setup_project(
+            project="drive_delete_proj",
+            name="Drive Delete Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add catalog entry
+        mock_rag_client.add_catalog_entry(
+            doc_id="delete_with_drive",
+            name="Delete With Drive",
+            doc_type="設計書",
+            project="drive_delete_proj",
+            phase_task="P1-T01",
+            metadata={},
+        )
+
+        # Mock Drive deletion
+        mock_drive_client.delete_file.return_value = True
+
+        result = document_tools.delete_document(
+            doc_id="delete_with_drive",
+            project="drive_delete_proj",
+            delete_drive_file=True,
+            soft_delete=False,
+        )
+
+        assert result.success is True
+        assert result.drive_file_deleted is True
+        mock_drive_client.delete_file.assert_called_once_with(
+            "delete_with_drive", permanent=True
+        )
+
+
+class TestListDocuments:
+    """Tests for list_documents method."""
+
+    def test_list_documents_no_project(self, document_tools):
+        """Test list_documents fails without project."""
+        result = document_tools.list_documents()
+
+        assert result.success is False
+        assert "プロジェクトが選択されていません" in result.message
+
+    def test_list_documents_empty(self, document_tools, project_tools):
+        """Test list_documents returns empty when no documents."""
+        project_tools.setup_project(
+            project="empty_list_proj",
+            name="Empty List Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        result = document_tools.list_documents()
+
+        assert result.success is True
+        assert len(result.documents) == 0
+        assert result.total_count == 0
+
+    def test_list_documents_with_filter(
+        self, document_tools, mock_rag_client, project_tools
+    ):
+        """Test list_documents with doc_type filter."""
+        # Setup project
+        project_tools.setup_project(
+            project="filter_proj",
+            name="Filter Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add multiple catalog entries
+        mock_rag_client.add_catalog_entry(
+            doc_id="design_doc",
+            name="Design Doc",
+            doc_type="設計書",
+            project="filter_proj",
+            phase_task="P1-T01",
+            metadata={"source": "Google Docs"},
+        )
+        mock_rag_client.add_catalog_entry(
+            doc_id="procedure_doc",
+            name="Procedure Doc",
+            doc_type="実装手順書",
+            project="filter_proj",
+            phase_task="P2-T01",
+            metadata={"source": "Google Docs"},
+        )
+
+        result = document_tools.list_documents(doc_type="設計書")
+
+        assert result.success is True
+        assert result.total_count == 1
+        assert result.documents[0].doc_type == "設計書"
+
+    def test_list_documents_pagination(
+        self, document_tools, mock_rag_client, project_tools
+    ):
+        """Test list_documents pagination."""
+        # Setup project
+        project_tools.setup_project(
+            project="pagination_proj",
+            name="Pagination Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add multiple catalog entries
+        for i in range(5):
+            mock_rag_client.add_catalog_entry(
+                doc_id=f"doc_{i}",
+                name=f"Document {i}",
+                doc_type="設計書",
+                project="pagination_proj",
+                phase_task=f"P1-T0{i}",
+                metadata={"source": "Google Docs"},
+            )
+
+        # Test limit
+        result = document_tools.list_documents(limit=2, offset=0)
+        assert result.success is True
+        assert len(result.documents) == 2
+        assert result.total_count == 5
+
+        # Test offset
+        result2 = document_tools.list_documents(limit=2, offset=2)
+        assert result2.success is True
+        assert len(result2.documents) == 2
+        assert result2.offset == 2
+
+
+class TestUpdateDocumentExtended:
+    """Tests for update_document with extended fields."""
+
+    def test_update_document_doc_type_change(
+        self, document_tools, mock_rag_client, mock_drive_client, project_tools
+    ):
+        """Test updating document with doc_type change moves file."""
+        # Setup project
+        project_tools.setup_project(
+            project="update_type_proj",
+            name="Update Type Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add catalog entry
+        mock_rag_client.add_catalog_entry(
+            doc_id="change_type_doc",
+            name="Change Type Doc",
+            doc_type="設計書",
+            project="update_type_proj",
+            phase_task="P1-T01",
+            metadata={"source": "Google Docs"},
+        )
+
+        # Mock Drive operations
+        mock_drive_client.ensure_folder_path.return_value = (
+            MockFileInfo(file_id="procedure_folder", name="実装手順書"),
+            False,
+        )
+        mock_drive_client.move_file.return_value = MockFileInfo(
+            file_id="change_type_doc",
+            name="Change Type Doc",
+        )
+
+        result = document_tools.update_document(
+            doc_id="change_type_doc",
+            metadata={"doc_type": "実装手順書"},
+        )
+
+        assert result.success is True
+        assert "doc_type" in result.updated_fields
+        mock_drive_client.move_file.assert_called_once()
+
+    def test_update_document_phase_task_change(
+        self, document_tools, mock_rag_client, mock_sheets_client, project_tools
+    ):
+        """Test updating document with phase_task change."""
+        # Setup project
+        project_tools.setup_project(
+            project="update_phase_proj",
+            name="Update Phase Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add catalog entry
+        mock_rag_client.add_catalog_entry(
+            doc_id="change_phase_doc",
+            name="Change Phase Doc",
+            doc_type="設計書",
+            project="update_phase_proj",
+            phase_task="P1-T01",
+            metadata={"source": "Google Docs"},
+        )
+
+        # Mock Sheets operations
+        mock_sheets_client.find_row_by_value.return_value = 3
+        mock_sheets_client.get_sheet_values.return_value = [[
+            "Change Phase Doc", "Google Docs", "change_phase_doc",
+            "設計書", "update_phase_proj", "P1-T01", "", "", "", "", "", "", ""
+        ]]
+        mock_sheets_client.update_row.return_value = {}
+
+        result = document_tools.update_document(
+            doc_id="change_phase_doc",
+            metadata={"phase_task": "P2-T01"},
+        )
+
+        assert result.success is True
+        assert "phase_task" in result.updated_fields
