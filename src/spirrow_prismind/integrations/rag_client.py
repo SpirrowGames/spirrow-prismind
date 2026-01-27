@@ -676,41 +676,53 @@ class RAGClient:
         n_results: int = 5,
     ) -> RAGSearchResult:
         """Search for knowledge entries.
-        
+
         Args:
             query: Search query
             category: Filter by category
             project: Filter by project (None includes general)
             tags: Filter by tags (AND condition)
             n_results: Maximum results
-            
+
         Returns:
             RAGSearchResult
         """
-        where: dict[str, Any] = {"type": {"$eq": "knowledge"}}
-        
+        # Note: We don't filter by type="knowledge" because older data
+        # added directly to RAG server may not have the type field.
+        # Instead, we exclude project_config in post-filtering.
+        where: dict[str, Any] = {}
+
         if category:
             where["category"] = {"$eq": category}
-        
+
         if project:
             # Include both project-specific and general knowledge
             where["$or"] = [
                 {"project": {"$eq": project}},
                 {"project": {"$eq": ""}},
             ]
-        
+
         # Note: Tag filtering with AND condition is complex in ChromaDB
         # We'll filter in Python after the search
-        
+        # Request more results to account for post-filtering
+        needs_post_filter = tags is not None
+        multiplier = 3 if needs_post_filter else 2  # Extra buffer for project_config exclusion
+
         result = self.search(
             query=query,
-            n_results=n_results * 2 if tags else n_results,  # Get more if filtering
-            where=where,
+            n_results=n_results * multiplier,
+            where=where if where else None,
         )
-        
+
         if not result.success:
             return result
-        
+
+        # Post-filter: exclude project_config documents
+        result.documents = [
+            doc for doc in result.documents
+            if doc.metadata.get("type") != "project_config"
+        ]
+
         # Filter by tags if specified
         if tags:
             filtered = []
@@ -720,10 +732,14 @@ class RAGClient:
                     filtered.append(doc)
                     if len(filtered) >= n_results:
                         break
-            
+
             result.documents = filtered
-            result.total_count = len(filtered)
-        
+        else:
+            # Limit to n_results
+            result.documents = result.documents[:n_results]
+
+        result.total_count = len(result.documents)
+
         return result
 
     # =======================

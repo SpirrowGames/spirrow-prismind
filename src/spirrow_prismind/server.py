@@ -302,7 +302,7 @@ TOOLS = [
     ),
     Tool(
         name="delete_project",
-        description="Delete project settings (actual data is preserved).",
+        description="Delete project settings. Optionally delete the Google Drive folder as well.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -313,6 +313,11 @@ TOOLS = [
                 "confirm": {
                     "type": "boolean",
                     "description": "Delete confirmation (true to execute deletion)",
+                    "default": False,
+                },
+                "delete_drive_folder": {
+                    "type": "boolean",
+                    "description": "If true, permanently delete the Google Drive folder (cannot be undone)",
                     "default": False,
                 },
             },
@@ -705,6 +710,41 @@ TOOLS = [
                 },
             },
             "required": ["phase", "task_id", "name"],
+        },
+    ),
+    # Summary Operations
+    Tool(
+        name="update_summary",
+        description="Update the project summary sheet with information like description, current phase, and task counts.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Project description",
+                },
+                "current_phase": {
+                    "type": "string",
+                    "description": "Current phase name",
+                },
+                "completed_tasks": {
+                    "type": "integer",
+                    "description": "Number of completed tasks",
+                },
+                "total_tasks": {
+                    "type": "integer",
+                    "description": "Total number of tasks",
+                },
+                "custom_fields": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": "Custom key-value pairs to add/update",
+                },
+            },
         },
     ),
 ]
@@ -1117,7 +1157,7 @@ class PrismindServer:
 
         # Check if required tools are initialized
         google_required_tools = [
-            "start_session", "end_session", "save_session",
+            "start_session", "end_session", "save_session", "update_summary",
             "setup_project", "switch_project", "list_projects",
             "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
@@ -1267,11 +1307,13 @@ class PrismindServer:
             result = self._project_tools.delete_project(
                 project=args["project"],
                 confirm=args.get("confirm", False),
+                delete_drive_folder=args.get("delete_drive_folder", False),
             )
             return {
                 "success": result.success,
                 "project_id": result.project_id,
                 "message": result.message,
+                "drive_folder_deleted": result.drive_folder_deleted,
             }
 
         elif name == "sync_projects_from_drive":
@@ -1559,6 +1601,25 @@ class PrismindServer:
                 "success": result.success,
                 "project": result.project,
                 "task_id": result.task_id,
+                "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        # Summary Operations
+        elif name == "update_summary":
+            if not self._session_tools:
+                return {"success": False, "error": "Session tools not initialized"}
+            result = self._session_tools.update_summary(
+                project=args.get("project"),
+                description=args.get("description"),
+                current_phase=args.get("current_phase"),
+                completed_tasks=args.get("completed_tasks"),
+                total_tasks=args.get("total_tasks"),
+                custom_fields=args.get("custom_fields"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
                 "updated_fields": result.updated_fields,
                 "message": result.message,
             }

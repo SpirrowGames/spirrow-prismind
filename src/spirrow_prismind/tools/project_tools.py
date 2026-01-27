@@ -817,23 +817,29 @@ class ProjectTools:
         self,
         project: str,
         confirm: bool = False,
+        delete_drive_folder: bool = False,
     ) -> DeleteProjectResult:
-        """Delete project settings (not actual data).
-        
+        """Delete project settings and optionally the Google Drive folder.
+
         Args:
             project: Project identifier
             confirm: Confirmation flag (must be True)
-            
+            delete_drive_folder: If True, also delete the Google Drive folder (permanent)
+
         Returns:
             DeleteProjectResult
         """
         if not confirm:
+            warning = (
+                "削除を確認するには confirm=True を指定してください。\n"
+                "注意: これはプロジェクト設定を削除します。\n"
+                "delete_drive_folder=True を指定すると、Google Driveのフォルダも"
+                "完全に削除されます（復元不可）。"
+            )
             return DeleteProjectResult(
                 success=False,
                 project_id=project,
-                message="削除を確認するには confirm=True を指定してください。"
-                        "注意: これはプロジェクト設定のみを削除します。"
-                        "Google Drive/Sheets のデータは残ります。",
+                message=warning,
             )
 
         # Check if project exists
@@ -846,6 +852,24 @@ class ProjectTools:
                 message=f"プロジェクト '{project}' が見つかりません。",
             )
 
+        name = config_doc.metadata.get("name", project)
+        root_folder_id = config_doc.metadata.get("root_folder_id", "")
+
+        # Delete Google Drive folder if requested
+        drive_folder_deleted = False
+        if delete_drive_folder and root_folder_id:
+            try:
+                self.drive.delete_file(root_folder_id, permanent=True)
+                drive_folder_deleted = True
+                logger.info(f"Deleted Drive folder '{root_folder_id}' for project '{project}'")
+            except Exception as e:
+                logger.error(f"Failed to delete Drive folder '{root_folder_id}': {e}")
+                return DeleteProjectResult(
+                    success=False,
+                    project_id=project,
+                    message=f"Google Driveフォルダの削除に失敗しました: {e}",
+                )
+
         # Delete project config
         success = self._delete_project_config_with_fallback(project)
 
@@ -853,7 +877,9 @@ class ProjectTools:
             return DeleteProjectResult(
                 success=False,
                 project_id=project,
-                message="プロジェクト設定の削除に失敗しました。",
+                message="プロジェクト設定の削除に失敗しました。"
+                        + ("（Driveフォルダは削除済み）" if drive_folder_deleted else ""),
+                drive_folder_deleted=drive_folder_deleted,
             )
 
         # Also delete catalog entries for this project (only if RAG is available)
@@ -861,13 +887,18 @@ class ProjectTools:
         if self.rag.is_available:
             deleted_catalog_count = self.rag.delete_catalog_entries_by_project(project)
 
-        name = config_doc.metadata.get("name", project)
+        # Build result message
+        msg_parts = [f"プロジェクト '{name}' を削除しました。"]
+        if drive_folder_deleted:
+            msg_parts.append("Google Driveフォルダも削除しました。")
+        if deleted_catalog_count > 0:
+            msg_parts.append(f"目録エントリ {deleted_catalog_count} 件も削除しました。")
 
         return DeleteProjectResult(
             success=True,
             project_id=project,
-            message=f"プロジェクト '{name}' の設定を削除しました。"
-                    f"（目録エントリ {deleted_catalog_count} 件も削除）",
+            message=" ".join(msg_parts),
+            drive_folder_deleted=drive_folder_deleted,
         )
 
     def get_project_config(

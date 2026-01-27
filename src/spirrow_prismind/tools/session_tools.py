@@ -16,6 +16,7 @@ from ..models import (
     EndSessionResult,
     SaveSessionResult,
     SessionContext,
+    UpdateSummaryResult,
 )
 from .project_tools import ProjectTools
 
@@ -385,6 +386,142 @@ class SessionTools:
             saved_to=saved_to,
             message=message,
         )
+
+    def update_summary(
+        self,
+        project: Optional[str] = None,
+        description: Optional[str] = None,
+        current_phase: Optional[str] = None,
+        completed_tasks: Optional[int] = None,
+        total_tasks: Optional[int] = None,
+        custom_fields: Optional[dict[str, str]] = None,
+        user: Optional[str] = None,
+    ) -> UpdateSummaryResult:
+        """Update the summary sheet with project information.
+
+        Args:
+            project: Project ID (None for current)
+            description: Project description to update
+            current_phase: Current phase name
+            completed_tasks: Number of completed tasks
+            total_tasks: Total number of tasks
+            custom_fields: Additional key-value pairs to add/update
+            user: User ID
+
+        Returns:
+            UpdateSummaryResult
+        """
+        user = user or self.user_name
+
+        # Get project config
+        if project is None:
+            project = self.project_tools.get_current_project_id(user)
+
+        if not project:
+            return UpdateSummaryResult(
+                success=False,
+                message="プロジェクトが選択されていません。",
+            )
+
+        config = self.project_tools.get_project_config(project, user)
+        if not config:
+            return UpdateSummaryResult(
+                success=False,
+                project=project,
+                message=f"プロジェクト '{project}' の設定が見つかりません。",
+            )
+
+        try:
+            # Check if summary sheet exists
+            if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.summary):
+                return UpdateSummaryResult(
+                    success=False,
+                    project=project,
+                    message=f"サマリシート '{config.sheets.summary}' が見つかりません。",
+                )
+
+            # Read current summary data
+            range_name = f"{config.sheets.summary}!A:B"
+            result = self.sheets.read_range(
+                spreadsheet_id=config.spreadsheet_id,
+                range_name=range_name,
+            )
+
+            rows = result.get("values", [])
+            updated_fields = []
+
+            # Build a map of key -> row index
+            key_to_row: dict[str, int] = {}
+            for idx, row in enumerate(rows):
+                if row and len(row) >= 1:
+                    key_to_row[row[0]] = idx
+
+            # Update specific fields
+            updates_to_make: list[tuple[int, str, str]] = []
+
+            if description is not None and "説明" in key_to_row:
+                row_idx = key_to_row["説明"]
+                updates_to_make.append((row_idx, "説明", description))
+                updated_fields.append("説明")
+
+            if current_phase is not None and "現在のフェーズ" in key_to_row:
+                row_idx = key_to_row["現在のフェーズ"]
+                updates_to_make.append((row_idx, "現在のフェーズ", current_phase))
+                updated_fields.append("現在のフェーズ")
+
+            if completed_tasks is not None and "完了タスク" in key_to_row:
+                row_idx = key_to_row["完了タスク"]
+                updates_to_make.append((row_idx, "完了タスク", str(completed_tasks)))
+                updated_fields.append("完了タスク")
+
+            if total_tasks is not None and "全タスク" in key_to_row:
+                row_idx = key_to_row["全タスク"]
+                updates_to_make.append((row_idx, "全タスク", str(total_tasks)))
+                updated_fields.append("全タスク")
+
+            # Always update 最終更新
+            if "最終更新" in key_to_row:
+                row_idx = key_to_row["最終更新"]
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                updates_to_make.append((row_idx, "最終更新", now_str))
+                updated_fields.append("最終更新")
+
+            # Handle custom fields - append to the end if not exists
+            if custom_fields:
+                max_row = len(rows)
+                for key, value in custom_fields.items():
+                    if key in key_to_row:
+                        row_idx = key_to_row[key]
+                        updates_to_make.append((row_idx, key, value))
+                    else:
+                        # Append new row
+                        updates_to_make.append((max_row, key, value))
+                        max_row += 1
+                    updated_fields.append(key)
+
+            # Apply updates
+            for row_idx, key, value in updates_to_make:
+                update_range = f"{config.sheets.summary}!A{row_idx + 1}:B{row_idx + 1}"
+                self.sheets.update_range(
+                    spreadsheet_id=config.spreadsheet_id,
+                    range_name=update_range,
+                    values=[[key, value]],
+                )
+
+            return UpdateSummaryResult(
+                success=True,
+                project=project,
+                updated_fields=updated_fields,
+                message=f"サマリシートを更新しました。更新項目: {', '.join(updated_fields)}",
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to update summary: {e}")
+            return UpdateSummaryResult(
+                success=False,
+                project=project,
+                message=f"サマリシートの更新に失敗しました: {e}",
+            )
 
     def _get_recommended_docs(
         self,

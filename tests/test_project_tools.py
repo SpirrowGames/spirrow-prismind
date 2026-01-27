@@ -341,6 +341,53 @@ class TestDeleteProject:
         assert result.success is False
         assert "見つかりません" in result.message
 
+    def test_delete_project_with_drive_folder(self, project_tools, mock_drive_client):
+        """Test delete with Google Drive folder deletion."""
+        # Setup project
+        project_tools.setup_project(
+            project="drive_delete_proj",
+            name="Drive Delete Test",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder123",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Delete with drive folder deletion
+        result = project_tools.delete_project(
+            "drive_delete_proj",
+            confirm=True,
+            delete_drive_folder=True,
+        )
+
+        assert result.success is True
+        assert result.drive_folder_deleted is True
+        assert "Driveフォルダも削除" in result.message
+
+        # Verify drive.delete_file was called
+        mock_drive_client.delete_file.assert_called_once_with("folder123", permanent=True)
+
+    def test_delete_project_without_drive_folder(self, project_tools, mock_drive_client):
+        """Test delete without Google Drive folder deletion."""
+        # Setup project
+        project_tools.setup_project(
+            project="no_drive_delete",
+            name="No Drive Delete",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder456",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Delete without drive folder deletion (default)
+        result = project_tools.delete_project("no_drive_delete", confirm=True)
+
+        assert result.success is True
+        assert result.drive_folder_deleted is False
+
+        # Verify drive.delete_file was NOT called
+        mock_drive_client.delete_file.assert_not_called()
+
 
 class TestGetProjectConfig:
     """Tests for get_project_config method."""

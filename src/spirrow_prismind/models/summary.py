@@ -110,3 +110,12 @@ class CheckServicesResult:
     services: list[ServiceStatus] = field(default_factory=list)
     all_required_available: bool = False
     message: str = ""
+
+
+@dataclass
+class UpdateSummaryResult:
+    """Result of updating summary sheet."""
+    success: bool
+    project: str = ""
+    updated_fields: list[str] = field(default_factory=list)
+    message: str = ""

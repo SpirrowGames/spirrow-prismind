@@ -265,6 +265,7 @@ class DeleteProjectResult:
     success: bool
     project_id: str = ""
     message: str = ""
+    drive_folder_deleted: bool = False
 
 
 @dataclass
