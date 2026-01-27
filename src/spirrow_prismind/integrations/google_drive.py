@@ -348,23 +348,65 @@ class GoogleDriveClient:
         parent_id: Optional[str] = None,
     ) -> tuple[FileInfo, bool]:
         """Create a folder if it doesn't exist.
-        
+
         Args:
             name: Folder name
             parent_id: Parent folder ID
-            
+
         Returns:
             Tuple of (FileInfo, created) where created is True if newly created
-            
+
         Raises:
             HttpError: If the API request fails
         """
         existing = self.find_folder_by_name(name, parent_id)
         if existing:
             return existing, False
-        
+
         new_folder = self.create_folder(name, parent_id)
         return new_folder, True
+
+    def ensure_folder_path(
+        self,
+        path: str,
+        parent_id: str,
+    ) -> tuple[Optional[FileInfo], bool]:
+        """Ensure a folder path exists, creating folders as needed.
+
+        Handles nested paths like "設計/詳細設計" by creating each
+        folder in the hierarchy if it doesn't exist.
+
+        Args:
+            path: Folder path (e.g., "設計/詳細設計")
+            parent_id: Parent folder ID
+
+        Returns:
+            Tuple of (final folder FileInfo, any folders created)
+            Returns (None, False) if path is empty
+        """
+        if not path:
+            return None, False
+
+        parts = [p.strip() for p in path.split("/") if p.strip()]
+        if not parts:
+            return None, False
+
+        current_parent = parent_id
+        any_created = False
+        final_folder: Optional[FileInfo] = None
+
+        for folder_name in parts:
+            folder_info, created = self.create_folder_if_not_exists(
+                name=folder_name,
+                parent_id=current_parent,
+            )
+            if created:
+                any_created = True
+                logger.info(f"Created folder '{folder_name}' in path '{path}'")
+            current_parent = folder_info.file_id
+            final_folder = folder_info
+
+        return final_folder, any_created
 
     def delete_file(self, file_id: str, permanent: bool = False) -> bool:
         """Delete a file or folder.

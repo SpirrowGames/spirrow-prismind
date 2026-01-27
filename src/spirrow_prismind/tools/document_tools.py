@@ -31,12 +31,6 @@ logger = logging.getLogger(__name__)
 class DocumentTools:
     """Tools for document operations."""
 
-    # Document type to folder mapping
-    DOC_TYPE_FOLDERS = {
-        "設計書": "design_folder",
-        "実装手順書": "procedure_folder",
-    }
-
     def __init__(
         self,
         docs_client: GoogleDocsClient,
@@ -223,7 +217,7 @@ class DocumentTools:
             CreateDocumentResult
         """
         user = user or self.user_name
-        
+
         # Get current project config
         config = self.project_tools.get_project_config(user=user)
         if not config:
@@ -231,37 +225,49 @@ class DocumentTools:
                 success=False,
                 doc_id="",
                 name=name,
+                doc_type=doc_type,
                 doc_url="",
                 source="",
                 catalog_registered=False,
+                unknown_doc_type=False,
                 message="プロジェクトが選択されていません。",
             )
-        
+
+        # Step 1: Resolve document type - reject unknown types
+        doc_type_obj = self.get_document_type(doc_type, user=user)
+
+        if not doc_type_obj:
+            # Unknown doc_type - do NOT create, return flag
+            return CreateDocumentResult(
+                success=False,
+                doc_id="",
+                name=name,
+                doc_type=doc_type,
+                doc_url="",
+                source="",
+                catalog_registered=False,
+                unknown_doc_type=True,
+                message=f"ドキュメントタイプ '{doc_type}' は登録されていません。"
+                "register_document_type で登録してください。",
+            )
+
         try:
-            # Step 1: Determine target folder
+            # Step 2: Determine target folder using nested path support
             target_folder_id = config.root_folder_id  # Default to project root
+            folder_path = doc_type_obj.folder_name  # e.g., "設計/詳細設計"
 
-            folder_name = ""
-            doc_type_obj = self.get_document_type(doc_type, user=user)
-            if doc_type_obj:
-                folder_name = doc_type_obj.folder_name
-            else:
-                # Fallback to legacy mapping for backward compatibility
-                folder_key = self.DOC_TYPE_FOLDERS.get(doc_type, "design_folder")
-                folder_name = getattr(config.drive, folder_key, "")
-
-            if folder_name and config.root_folder_id:
-                # Find or create the subfolder
-                folder_info, created = self.drive.create_folder_if_not_exists(
-                    name=folder_name,
+            if folder_path and config.root_folder_id:
+                # Use ensure_folder_path for nested paths
+                folder_info, created = self.drive.ensure_folder_path(
+                    path=folder_path,
                     parent_id=config.root_folder_id,
                 )
                 if folder_info:
                     target_folder_id = folder_info.file_id
                     if created:
-                        logger.info(f"Created folder '{folder_name}' in project folder")
+                        logger.info(f"Created folder path '{folder_path}' in project folder")
 
-            # Step 2: Create document in the correct folder using Drive API
+            # Step 3: Create document in the correct folder using Drive API
             file_info = self.drive.create_document(
                 name=name,
                 parent_id=target_folder_id,
@@ -269,7 +275,7 @@ class DocumentTools:
             doc_id = file_info.file_id
             doc_url = file_info.web_view_link or f"https://docs.google.com/document/d/{doc_id}/edit"
 
-            # Step 3: Add content using Docs API
+            # Step 4: Add content using Docs API
             if content:
                 # Add heading first
                 heading_text = name + "\n"
@@ -288,11 +294,11 @@ class DocumentTools:
                 # Add content after heading
                 self.docs.insert_text(doc_id, content, index=1 + len(heading_text))
 
-            # Step 4: Auto-generate keywords if not provided
+            # Step 5: Auto-generate keywords if not provided
             if keywords is None:
                 keywords = self._generate_keywords(name, content, feature)
 
-            # Step 5: Register in catalog (Sheets)
+            # Step 6: Register in catalog (Sheets)
             catalog_registered = False
             catalog_warning = ""
             try:
@@ -305,7 +311,7 @@ class DocumentTools:
                         config=config,
                         doc_id=doc_id,
                         name=name,
-                        doc_type=doc_type,
+                        doc_type=doc_type_obj.name,
                         phase_task=phase_task,
                         feature=feature,
                         keywords=keywords,
@@ -315,12 +321,12 @@ class DocumentTools:
             except Exception as e:
                 logger.error(f"Failed to register in Sheets catalog: {e}")
                 catalog_warning = f"目録シートへの登録に失敗しました: {e}"
-            
-            # Step 6: Register in RAG cache
+
+            # Step 7: Register in RAG cache
             self.rag.add_catalog_entry(
                 doc_id=doc_id,
                 name=name,
-                doc_type=doc_type,
+                doc_type=doc_type_obj.name,
                 project=config.project_id,
                 phase_task=phase_task,
                 metadata={
@@ -332,7 +338,7 @@ class DocumentTools:
                     "url": doc_url,
                 },
             )
-            
+
             message = f"ドキュメント '{name}' を作成しました。"
             if catalog_warning:
                 message += f" ({catalog_warning})"
@@ -341,21 +347,25 @@ class DocumentTools:
                 success=True,
                 doc_id=doc_id,
                 name=name,
+                doc_type=doc_type_obj.name,
                 doc_url=doc_url,
                 source="Google Docs",
                 catalog_registered=catalog_registered,
+                unknown_doc_type=False,
                 message=message,
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to create document: {e}")
             return CreateDocumentResult(
                 success=False,
                 doc_id="",
                 name=name,
+                doc_type=doc_type,
                 doc_url="",
                 source="",
                 catalog_registered=False,
+                unknown_doc_type=False,
                 message=f"ドキュメントの作成に失敗しました: {e}",
             )
 

@@ -156,7 +156,37 @@ class TestCreateDocument:
         )
 
         assert result.success is False
+        assert result.doc_type == "設計書"
+        assert result.unknown_doc_type is False
         assert "プロジェクトが選択されていません" in result.message
+
+    def test_create_document_unknown_doc_type(
+        self, document_tools, project_tools
+    ):
+        """Test create_document fails with unknown doc_type."""
+        # Setup project
+        project_tools.setup_project(
+            project="unknown_type_proj",
+            name="Unknown Type Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        result = document_tools.create_document(
+            name="議事録テスト",
+            doc_type="議事録",  # Not registered
+            content="会議の内容",
+            phase_task="P1-T01",
+        )
+
+        assert result.success is False
+        assert result.unknown_doc_type is True
+        assert result.doc_type == "議事録"
+        assert result.doc_id == ""
+        assert "登録されていません" in result.message
+        assert "register_document_type" in result.message
 
     def test_create_document_success(
         self, document_tools, mock_docs_client, mock_drive_client, project_tools
@@ -172,8 +202,8 @@ class TestCreateDocument:
             create_folders=False,
         )
 
-        # Setup mock - new implementation uses Drive API to create document
-        mock_drive_client.create_folder_if_not_exists.return_value = (
+        # Setup mock - new implementation uses ensure_folder_path
+        mock_drive_client.ensure_folder_path.return_value = (
             MockFileInfo(
                 file_id="design_folder_id",
                 name="設計書",
@@ -201,11 +231,93 @@ class TestCreateDocument:
         assert result.success is True
         assert result.doc_id == "new_doc_id"
         assert result.name == "New Document"
+        assert result.doc_type == "設計書"
+        assert result.unknown_doc_type is False
         assert "作成しました" in result.message
+        # Verify ensure_folder_path was called
+        mock_drive_client.ensure_folder_path.assert_called_once_with(
+            path="設計書",
+            parent_id="folder1",
+        )
         # Verify the document was created in the correct folder
         mock_drive_client.create_document.assert_called_once_with(
             name="New Document",
             parent_id="design_folder_id",
+        )
+
+    def test_create_document_with_nested_folder_path(
+        self, document_tools, mock_docs_client, mock_drive_client, mock_rag_client, project_tools
+    ):
+        """Test document creation with nested folder path like '設計/詳細設計'."""
+        from spirrow_prismind.tools.project_tools import ProjectTools
+
+        # Setup project with custom document type having nested folder
+        result = project_tools.setup_project(
+            project="nested_proj",
+            name="Nested Folder Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="root_folder",
+            create_sheets=False,
+            create_folders=False,
+        )
+        assert result.success is True, f"setup_project failed: {result.message}"
+
+        # Add custom document type directly to fallback storage
+        # The project should now exist in fallback storage
+        nested_doc_type = {
+            "type_id": "detailed_design",
+            "name": "詳細設計書",
+            "folder_name": "設計/詳細設計",
+            "template_doc_id": "",
+            "description": "詳細設計ドキュメント",
+            "fields": [],
+            "is_builtin": False,
+        }
+
+        # Get the project from fallback storage and update document_types
+        if "nested_proj" in ProjectTools._fallback_projects:
+            ProjectTools._fallback_projects["nested_proj"]["document_types"] = [nested_doc_type]
+        else:
+            # Fallback: add the project manually if setup didn't save to fallback
+            ProjectTools._fallback_projects["nested_proj"] = {
+                "project_id": "nested_proj",
+                "name": "Nested Folder Project",
+                "spreadsheet_id": "sheet1",
+                "root_folder_id": "root_folder",
+                "document_types": [nested_doc_type],
+            }
+            ProjectTools._fallback_current_project["test_user"] = "nested_proj"
+
+        # Setup mock for nested folder creation
+        mock_drive_client.ensure_folder_path.return_value = (
+            MockFileInfo(
+                file_id="nested_folder_id",
+                name="詳細設計",
+            ),
+            True,  # created=True (folders were created)
+        )
+        mock_drive_client.create_document.return_value = MockFileInfo(
+            file_id="nested_doc_id",
+            name="Detailed Design Doc",
+            web_view_link="https://docs.google.com/document/d/nested_doc_id/edit",
+        )
+        mock_docs_client.insert_text.return_value = True
+        mock_docs_client.service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+
+        result = document_tools.create_document(
+            name="Detailed Design Doc",
+            doc_type="詳細設計書",
+            content="詳細設計の内容",
+            phase_task="P2-T01",
+        )
+
+        assert result.success is True
+        assert result.doc_id == "nested_doc_id"
+        assert result.doc_type == "詳細設計書"
+        # Verify ensure_folder_path was called with nested path
+        mock_drive_client.ensure_folder_path.assert_called_with(
+            path="設計/詳細設計",
+            parent_id="root_folder",
         )
 
 

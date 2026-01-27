@@ -129,9 +129,11 @@ class CreateDocumentResult:
     success: bool
     doc_id: str = ""
     name: str = ""
+    doc_type: str = ""  # The specified doc_type
     doc_url: str = ""
     source: str = ""
     catalog_registered: bool = False
+    unknown_doc_type: bool = False  # True if doc_type was not registered
     message: str = ""
 
 
