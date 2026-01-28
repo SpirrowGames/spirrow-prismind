@@ -11,6 +11,12 @@ from .retry import RETRYABLE_EXCEPTIONS, with_retry
 
 logger = logging.getLogger(__name__)
 
+# Collection name for document types (separate from main knowledge collection)
+DOCUMENT_TYPES_COLLECTION = "document_types"
+
+# Default similarity threshold for document type matching
+DEFAULT_SIMILARITY_THRESHOLD = 0.75
+
 
 @dataclass
 class RAGDocument:
@@ -912,3 +918,208 @@ class RAGClient:
                 count += 1
 
         return count
+
+    # ===========================
+    # Document Type Operations
+    # ===========================
+
+    def _ensure_document_types_collection(self) -> bool:
+        """Ensure the document types collection exists.
+
+        Returns:
+            True if collection exists or was created, False on error.
+        """
+        try:
+            response = self._client.get(
+                f"{self.base_url}/api/v1/collections/{DOCUMENT_TYPES_COLLECTION}",
+            )
+            if response.status_code == 200:
+                return True
+            elif response.status_code == 404:
+                # Create the collection
+                create_response = self._client.post(
+                    f"{self.base_url}/api/v1/collections",
+                    json={"name": DOCUMENT_TYPES_COLLECTION},
+                )
+                if create_response.status_code in (200, 201):
+                    logger.info(f"Created collection '{DOCUMENT_TYPES_COLLECTION}'")
+                    return True
+                logger.warning(
+                    f"Failed to create {DOCUMENT_TYPES_COLLECTION} collection: "
+                    f"{create_response.status_code}"
+                )
+                return False
+            return False
+        except Exception as e:
+            logger.warning(f"Could not verify/create document types collection: {e}")
+            return False
+
+    def save_document_type(
+        self,
+        type_id: str,
+        name: str,
+        description: str,
+        folder_name: str,
+    ) -> RAGOperationResult:
+        """Save a document type to RAG for semantic search.
+
+        The content is constructed from type_id, name, and description to enable
+        semantic matching across languages (e.g., "api_spec" matches "API仕様").
+
+        Args:
+            type_id: Unique document type ID (e.g., "api_spec")
+            name: Display name (e.g., "API仕様書")
+            description: Description of the document type
+            folder_name: Folder name in Google Drive
+
+        Returns:
+            RAGOperationResult
+        """
+        if not self._ensure_document_types_collection():
+            return RAGOperationResult(
+                success=False,
+                doc_id=f"doctype:{type_id}",
+                message="Document types collection not available",
+            )
+
+        doc_id = f"doctype:{type_id}"
+        # Combine all searchable text for embedding
+        content = f"{type_id} {name} {description}".strip()
+
+        metadata = {
+            "type_id": type_id,
+            "name": name,
+            "description": description,
+            "folder_name": folder_name,
+            "updated_at": datetime.now().isoformat(),
+        }
+
+        return self.upsert_document(
+            doc_id=doc_id,
+            content=content,
+            metadata=metadata,
+            collection=DOCUMENT_TYPES_COLLECTION,
+        )
+
+    def find_similar_document_types(
+        self,
+        query: str,
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+        limit: int = 5,
+    ) -> list[RAGDocument]:
+        """Find document types semantically similar to the query.
+
+        Uses BGE-M3 embeddings for multilingual semantic matching.
+        For example, "api仕様" can match "api_spec".
+
+        Args:
+            query: Search query (can be type_id, name, or description in any language)
+            threshold: Minimum similarity score (0.0-1.0), default 0.75
+            limit: Maximum number of results
+
+        Returns:
+            List of matching RAGDocument objects, sorted by similarity (highest first).
+            Each document's metadata contains: type_id, name, description, folder_name.
+        """
+        if not self._available:
+            logger.warning("RAG not available, cannot search document types")
+            return []
+
+        if not self._ensure_document_types_collection():
+            return []
+
+        result = self.search(
+            query=query,
+            n_results=limit,
+            collection=DOCUMENT_TYPES_COLLECTION,
+        )
+
+        if not result.success:
+            logger.warning(f"Document type search failed: {result.message}")
+            return []
+
+        # Filter by threshold
+        matches = [doc for doc in result.documents if doc.score >= threshold]
+
+        logger.debug(
+            f"Document type search for '{query}': "
+            f"{len(matches)} matches above threshold {threshold}"
+        )
+
+        return matches
+
+    def delete_document_type_from_rag(self, type_id: str) -> RAGOperationResult:
+        """Delete a document type from RAG.
+
+        Args:
+            type_id: Document type ID to delete
+
+        Returns:
+            RAGOperationResult
+        """
+        doc_id = f"doctype:{type_id}"
+        return self.delete_document(doc_id, collection=DOCUMENT_TYPES_COLLECTION)
+
+    def sync_document_types(
+        self,
+        types: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Sync document types from JSON storage to RAG.
+
+        This is typically called on startup to ensure RAG has all registered types.
+
+        Args:
+            types: List of document type dicts with keys:
+                   type_id, name, description, folder_name
+
+        Returns:
+            Dict with sync statistics:
+            - synced: Number successfully synced
+            - failed: Number that failed
+            - errors: List of error messages
+        """
+        if not self._available:
+            return {
+                "synced": 0,
+                "failed": len(types),
+                "errors": ["RAG server not available"],
+            }
+
+        if not self._ensure_document_types_collection():
+            return {
+                "synced": 0,
+                "failed": len(types),
+                "errors": ["Could not create document types collection"],
+            }
+
+        synced = 0
+        failed = 0
+        errors = []
+
+        for type_data in types:
+            type_id = type_data.get("type_id", "")
+            if not type_id:
+                errors.append("Missing type_id in document type data")
+                failed += 1
+                continue
+
+            result = self.save_document_type(
+                type_id=type_id,
+                name=type_data.get("name", type_id),
+                description=type_data.get("description", ""),
+                folder_name=type_data.get("folder_name", ""),
+            )
+
+            if result.success:
+                synced += 1
+            else:
+                failed += 1
+                errors.append(f"{type_id}: {result.message}")
+
+        logger.info(f"Synced document types to RAG: {synced} succeeded, {failed} failed")
+
+        return {
+            "synced": synced,
+            "failed": failed,
+            "errors": errors,
+        }

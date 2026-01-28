@@ -594,6 +594,25 @@ TOOLS = [
             "required": ["type_id"],
         },
     ),
+    Tool(
+        name="find_similar_document_type",
+        description="Find a document type semantically similar to the query. Uses RAG-based semantic search (BGE-M3 embeddings) for multilingual matching. For example, 'api仕様' can match 'api_spec'.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "type_query": {
+                    "type": "string",
+                    "description": "Search query (type name, ID, or description in any language)",
+                },
+                "threshold": {
+                    "type": "number",
+                    "description": "Minimum similarity score (0.0-1.0)",
+                    "default": 0.75,
+                },
+            },
+            "required": ["type_query"],
+        },
+    ),
     # Catalog Operations
     Tool(
         name="search_catalog",
@@ -1272,6 +1291,7 @@ class PrismindServer:
             "get_document", "create_document", "update_document",
             "delete_document", "list_documents",
             "list_document_types", "register_document_type", "delete_document_type",
+            "find_similar_document_type",
             "search_catalog", "sync_catalog",
             "get_progress", "update_task_status", "add_task",
         ]
@@ -1615,6 +1635,13 @@ class PrismindServer:
                 "type_id": result.type_id,
                 "message": result.message,
             }
+
+        elif name == "find_similar_document_type":
+            result = self._document_tools.find_similar_document_type(
+                type_query=args["type_query"],
+                threshold=args.get("threshold", 0.75),
+            )
+            return result
 
         # Catalog Operations
         elif name == "search_catalog":

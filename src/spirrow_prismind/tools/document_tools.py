@@ -695,8 +695,8 @@ class DocumentTools:
         """
         user = user or self.user_name
 
-        # Step 1: Get global types
-        global_storage = GlobalDocumentTypeStorage()
+        # Step 1: Get global types (with RAG client for semantic search)
+        global_storage = GlobalDocumentTypeStorage(rag_client=self.rag)
         global_types = global_storage.get_all()
 
         # Build merged dict (global first, then project overrides)
@@ -777,8 +777,8 @@ class DocumentTools:
         )
 
         if scope == "global":
-            # Register to global storage
-            global_storage = GlobalDocumentTypeStorage()
+            # Register to global storage (with RAG client for semantic search)
+            global_storage = GlobalDocumentTypeStorage(rag_client=self.rag)
 
             # Check for existing global type with same ID
             if global_storage.exists(type_id):
@@ -913,8 +913,8 @@ class DocumentTools:
             )
 
         if scope == "global":
-            # Delete from global storage
-            global_storage = GlobalDocumentTypeStorage()
+            # Delete from global storage (with RAG client for sync)
+            global_storage = GlobalDocumentTypeStorage(rag_client=self.rag)
 
             if not global_storage.exists(type_id):
                 return DeleteDocumentTypeResult(
@@ -1018,6 +1018,87 @@ class DocumentTools:
                 return doc_type
 
         return None
+
+    def find_similar_document_type(
+        self,
+        type_query: str,
+        threshold: float = 0.75,
+        user: Optional[str] = None,
+    ) -> dict:
+        """Find a document type semantically similar to the query.
+
+        Uses RAG-based semantic search (BGE-M3 embeddings) for multilingual matching.
+        Falls back to local string matching when RAG is unavailable.
+
+        Args:
+            type_query: Search query (type name, ID, or description)
+            threshold: Minimum similarity score (0.0-1.0)
+            user: User ID
+
+        Returns:
+            Dict containing:
+            - found: Whether a match was found
+            - type_id: Matched type ID (if found)
+            - name: Matched type name (if found)
+            - folder_name: Matched type folder name (if found)
+            - similarity: Similarity score (if found)
+            - message: Status message
+        """
+        user = user or self.user_name
+
+        # Get global storage with RAG client
+        global_storage = GlobalDocumentTypeStorage(rag_client=self.rag)
+
+        # Try to find similar type
+        doc_type, score = global_storage.find_similar_with_score(
+            query=type_query,
+            threshold=threshold,
+        )
+
+        if doc_type:
+            return {
+                "found": True,
+                "type_id": doc_type.type_id,
+                "name": doc_type.name,
+                "folder_name": doc_type.folder_name,
+                "description": doc_type.description,
+                "similarity": score,
+                "message": f"Found similar document type '{doc_type.type_id}' (similarity: {score:.3f})",
+            }
+
+        # Also check project-specific types
+        config = self.project_tools.get_project_config(user=user)
+        if config and config.document_types:
+            # Simple local matching for project types
+            query_lower = type_query.lower().replace("-", "_").replace(" ", "_")
+            for type_data in config.document_types:
+                type_id = type_data.get("type_id", "")
+                name = type_data.get("name", "")
+                if (
+                    type_id.lower() == query_lower
+                    or name.lower() == query_lower
+                    or type_id.lower() in query_lower
+                    or query_lower in type_id.lower()
+                ):
+                    return {
+                        "found": True,
+                        "type_id": type_id,
+                        "name": name,
+                        "folder_name": type_data.get("folder_name", ""),
+                        "description": type_data.get("description", ""),
+                        "similarity": 0.8,  # Synthetic score for local match
+                        "message": f"Found project document type '{type_id}'",
+                    }
+
+        return {
+            "found": False,
+            "type_id": "",
+            "name": "",
+            "folder_name": "",
+            "description": "",
+            "similarity": 0.0,
+            "message": f"No document type similar to '{type_query}' found (threshold: {threshold})",
+        }
 
     def delete_document(
         self,
