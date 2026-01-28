@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 DOCUMENT_TYPES_COLLECTION = "document_types"
 
 # Default similarity threshold for document type matching
-DEFAULT_SIMILARITY_THRESHOLD = 0.75
+# BGE-M3 embeddings typically return scores in 0.5-0.7 range for semantic matches
+DEFAULT_SIMILARITY_THRESHOLD = 0.45
 
 
 @dataclass
@@ -1038,8 +1039,14 @@ class RAGClient:
             logger.warning(f"Document type search failed: {result.message}")
             return []
 
-        # Filter by threshold
-        matches = [doc for doc in result.documents if doc.score >= threshold]
+        # Filter by threshold AND valid type_id metadata
+        # Only include documents that have a type_id in their metadata
+        # This filters out regular documents that may have been accidentally
+        # added to the document_types collection
+        matches = [
+            doc for doc in result.documents
+            if doc.score >= threshold and doc.metadata.get("type_id")
+        ]
 
         logger.debug(
             f"Document type search for '{query}': "

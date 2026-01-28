@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_STORAGE_PATH = Path.home() / ".prismind_global_doc_types.json"
 
 # Default similarity threshold for semantic matching
-DEFAULT_SIMILARITY_THRESHOLD = 0.75
+# BGE-M3 embeddings typically return scores in 0.5-0.7 range for semantic matches
+DEFAULT_SIMILARITY_THRESHOLD = 0.45
 
 
 class GlobalDocumentTypeStorage:
@@ -338,10 +339,12 @@ class GlobalDocumentTypeStorage:
         """
         # Try RAG semantic search first
         if self._rag and self._rag.is_available:
+            # Use a higher limit to find valid document types
+            # (some entries in document_types collection may lack type_id metadata)
             matches = self._rag.find_similar_document_types(
                 query=query,
                 threshold=threshold,
-                limit=1,
+                limit=10,  # Increased to account for entries without type_id
             )
             if matches:
                 type_id = matches[0].metadata.get("type_id")

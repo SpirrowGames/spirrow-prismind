@@ -749,12 +749,12 @@ class DocumentTools:
         """
         user = user or self.user_name
 
-        # Validate type_id
-        if not type_id or not type_id.replace("_", "").isalnum():
+        # Validate type_id (ASCII alphanumeric and underscore only)
+        if not type_id or not all(c.isascii() and (c.isalnum() or c == "_") for c in type_id):
             return RegisterDocumentTypeResult(
                 success=False,
                 type_id=type_id,
-                message="type_id は英数字とアンダースコアのみ使用できます。",
+                message="type_id はASCII英数字とアンダースコアのみ使用できます（日本語不可）。",
             )
 
         # Validate scope
