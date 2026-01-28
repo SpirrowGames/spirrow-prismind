@@ -6,6 +6,40 @@ from unittest.mock import MagicMock, patch
 from tests.mocks import MockRAGClient, MockMemoryClient
 
 
+@pytest.fixture(autouse=True)
+def reset_global_document_types(tmp_path):
+    """Reset GlobalDocumentTypeStorage singleton before each test."""
+    from spirrow_prismind.tools.global_document_types import GlobalDocumentTypeStorage
+    GlobalDocumentTypeStorage.reset_instance()
+    # Use temporary path for tests to avoid polluting the real file
+    storage = GlobalDocumentTypeStorage(tmp_path / ".prismind_global_doc_types.json")
+    yield storage
+    GlobalDocumentTypeStorage.reset_instance()
+
+
+@pytest.fixture
+def setup_standard_global_types(reset_global_document_types):
+    """Setup standard global document types for tests that need them."""
+    from spirrow_prismind.models.document import DocumentType
+
+    storage = reset_global_document_types
+    storage.register(DocumentType(
+        type_id="design",
+        name="設計書",
+        folder_name="設計書",
+        description="設計に関するドキュメント",
+        is_global=True,
+    ))
+    storage.register(DocumentType(
+        type_id="procedure",
+        name="実装手順書",
+        folder_name="実装手順書",
+        description="実装手順に関するドキュメント",
+        is_global=True,
+    ))
+    return storage
+
+
 @pytest.fixture
 def mock_rag_client():
     """Create a mock RAG client."""

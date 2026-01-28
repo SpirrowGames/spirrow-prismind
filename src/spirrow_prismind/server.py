@@ -522,7 +522,7 @@ TOOLS = [
     # Document Type Management
     Tool(
         name="list_document_types",
-        description="Get a list of available document types. Returns both built-in types (design_doc, implementation_guide) and project-specific custom types.",
+        description="Get a list of available document types. Returns both global types (shared across projects) and project-specific types. When same type_id exists in both, project type takes precedence.",
         inputSchema={
             "type": "object",
             "properties": {},
@@ -530,7 +530,7 @@ TOOLS = [
     ),
     Tool(
         name="register_document_type",
-        description="Register a new document type. Add project-specific custom document types.",
+        description="Register a new document type. Use scope='global' for types shared across all projects, or scope='project' for project-specific types.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -545,6 +545,12 @@ TOOLS = [
                 "folder_name": {
                     "type": "string",
                     "description": "Folder name in Google Drive",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "description": "Type scope: 'global' for shared across projects, 'project' for current project only",
+                    "default": "global",
                 },
                 "template_doc_id": {
                     "type": "string",
@@ -561,7 +567,7 @@ TOOLS = [
                 },
                 "create_folder": {
                     "type": "boolean",
-                    "description": "Auto-create folder",
+                    "description": "Auto-create folder (only applies to project scope)",
                     "default": True,
                 },
             },
@@ -570,13 +576,19 @@ TOOLS = [
     ),
     Tool(
         name="delete_document_type",
-        description="Delete a custom document type. Built-in types cannot be deleted.",
+        description="Delete a document type. Use scope='global' for global types, or scope='project' for project-specific types.",
         inputSchema={
             "type": "object",
             "properties": {
                 "type_id": {
                     "type": "string",
                     "description": "Type ID to delete",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "description": "Type scope to delete from: 'global' or 'project'",
+                    "default": "global",
                 },
             },
             "required": ["type_id"],
@@ -1567,7 +1579,7 @@ class PrismindServer:
                         "template_doc_id": dt.template_doc_id,
                         "description": dt.description,
                         "fields": dt.fields,
-                        "is_builtin": dt.is_builtin,
+                        "is_global": dt.is_global,
                     }
                     for dt in result.document_types
                 ],
@@ -1579,6 +1591,7 @@ class PrismindServer:
                 type_id=args["type_id"],
                 name=args["name"],
                 folder_name=args["folder_name"],
+                scope=args.get("scope", "global"),
                 template_doc_id=args.get("template_doc_id"),
                 description=args.get("description"),
                 fields=args.get("fields"),
@@ -1595,6 +1608,7 @@ class PrismindServer:
         elif name == "delete_document_type":
             result = self._document_tools.delete_document_type(
                 type_id=args["type_id"],
+                scope=args.get("scope", "global"),
             )
             return {
                 "success": result.success,

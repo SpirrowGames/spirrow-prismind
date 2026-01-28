@@ -2,7 +2,6 @@
 
 from .catalog import CatalogEntry, SearchCatalogResult, SyncCatalogResult
 from .document import (
-    BUILTIN_DOCUMENT_TYPES,
     CreateDocumentResult,
     DeleteDocumentResult,
     DeleteDocumentTypeResult,
@@ -80,7 +79,6 @@ __all__ = [
     "SearchCatalogResult",
     "SyncCatalogResult",
     # Document
-    "BUILTIN_DOCUMENT_TYPES",
     "CreateDocumentResult",
     "DeleteDocumentResult",
     "DeleteDocumentTypeResult",

@@ -11,7 +11,6 @@ from ..integrations import (
     RAGClient,
 )
 from ..models import (
-    BUILTIN_DOCUMENT_TYPES,
     CatalogEntry,
     CreateDocumentResult,
     DeleteDocumentResult,
@@ -26,6 +25,7 @@ from ..models import (
     RegisterDocumentTypeResult,
     UpdateDocumentResult,
 )
+from .global_document_types import GlobalDocumentTypeStorage
 from .project_tools import ProjectTools
 
 logger = logging.getLogger(__name__)
@@ -684,6 +684,9 @@ class DocumentTools:
     ) -> ListDocumentTypesResult:
         """List available document types for the current project.
 
+        Merges global types and project-specific types. When both have the
+        same type_id, project-specific type takes precedence (override).
+
         Args:
             user: User ID
 
@@ -692,15 +695,23 @@ class DocumentTools:
         """
         user = user or self.user_name
 
-        # Start with built-in types
-        all_types: list[DocumentType] = list(BUILTIN_DOCUMENT_TYPES)
+        # Step 1: Get global types
+        global_storage = GlobalDocumentTypeStorage()
+        global_types = global_storage.get_all()
 
-        # Get current project config
+        # Build merged dict (global first, then project overrides)
+        all_types_dict: dict[str, DocumentType] = {}
+        for doc_type in global_types:
+            all_types_dict[doc_type.type_id] = doc_type
+
+        # Step 2: Get project-specific types (these can override global)
         config = self.project_tools.get_project_config(user=user)
         if config and config.document_types:
-            # Add custom document types from project config
             for type_data in config.document_types:
-                all_types.append(DocumentType.from_dict(type_data))
+                doc_type = DocumentType.from_dict(type_data)
+                all_types_dict[doc_type.type_id] = doc_type
+
+        all_types = list(all_types_dict.values())
 
         return ListDocumentTypesResult(
             success=True,
@@ -713,6 +724,7 @@ class DocumentTools:
         type_id: str,
         name: str,
         folder_name: str,
+        scope: str = "global",
         template_doc_id: Optional[str] = None,
         description: Optional[str] = None,
         fields: Optional[list[str]] = None,
@@ -725,6 +737,7 @@ class DocumentTools:
             type_id: Unique ID for the document type (e.g., "meeting_notes")
             name: Display name (e.g., "議事録")
             folder_name: Folder name in Google Drive
+            scope: "global" for shared types, "project" for project-specific
             template_doc_id: Optional Google Docs template ID
             description: Description of the document type
             fields: Custom metadata fields
@@ -744,32 +757,13 @@ class DocumentTools:
                 message="type_id は英数字とアンダースコアのみ使用できます。",
             )
 
-        # Check for built-in type collision
-        for builtin in BUILTIN_DOCUMENT_TYPES:
-            if builtin.type_id == type_id:
-                return RegisterDocumentTypeResult(
-                    success=False,
-                    type_id=type_id,
-                    message=f"'{type_id}' はビルトインタイプとして予約されています。",
-                )
-
-        # Get current project config
-        config = self.project_tools.get_project_config(user=user)
-        if not config:
+        # Validate scope
+        if scope not in ("global", "project"):
             return RegisterDocumentTypeResult(
                 success=False,
                 type_id=type_id,
-                message="プロジェクトが選択されていません。",
+                message=f"scope は 'global' または 'project' である必要があります: {scope}",
             )
-
-        # Check for existing custom type with same ID
-        for existing in config.document_types:
-            if existing.get("type_id") == type_id:
-                return RegisterDocumentTypeResult(
-                    success=False,
-                    type_id=type_id,
-                    message=f"'{type_id}' は既に登録されています。",
-                )
 
         # Create the document type
         new_type = DocumentType(
@@ -779,75 +773,130 @@ class DocumentTools:
             template_doc_id=template_doc_id or "",
             description=description or "",
             fields=fields or [],
-            is_builtin=False,
+            is_global=(scope == "global"),
         )
 
-        # Create folder in Google Drive if requested
-        folder_created = False
-        if create_folder and config.root_folder_id:
-            try:
-                existing_folder = self.drive.find_folder_by_name(
-                    name=folder_name,
-                    parent_id=config.root_folder_id,
+        if scope == "global":
+            # Register to global storage
+            global_storage = GlobalDocumentTypeStorage()
+
+            # Check for existing global type with same ID
+            if global_storage.exists(type_id):
+                return RegisterDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message=f"グローバルタイプ '{type_id}' は既に登録されています。",
                 )
-                if not existing_folder:
-                    self.drive.create_folder(
-                        name=folder_name,
-                        parent_id=config.root_folder_id,
-                    )
-                    folder_created = True
-                    logger.info(f"Created folder '{folder_name}' for document type '{type_id}'")
-            except Exception as e:
-                logger.warning(f"Failed to create folder '{folder_name}': {e}")
 
-        # Add to project config
-        config.document_types.append(new_type.to_dict())
+            # Register global type
+            if not global_storage.register(new_type):
+                return RegisterDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message=f"グローバルタイプの登録に失敗しました。",
+                )
 
-        # Save updated config
-        try:
-            config_data = {
-                "spreadsheet_id": config.spreadsheet_id,
-                "root_folder_id": config.root_folder_id,
-                "sheets": config.sheets.to_dict() if config.sheets else {},
-                "drive": config.drive.to_dict() if config.drive else {},
-                "docs": config.docs.to_dict() if config.docs else {},
-                "options": config.options.to_dict() if config.options else {},
-                "document_types": config.document_types,
-                "created_at": config.created_at.isoformat() if config.created_at else "",
-            }
-            self.project_tools._save_project_config_with_fallback(
-                project_id=config.project_id,
-                name=config.name,
-                description=config.description,
-                config_data=config_data,
-            )
-            logger.info(f"Registered document type '{type_id}' ({name})")
+            logger.info(f"Registered global document type '{type_id}' ({name})")
+
+            # Note: Global types don't create folders (no project context)
+            # Folders are created on-demand when creating documents
 
             return RegisterDocumentTypeResult(
                 success=True,
                 type_id=type_id,
                 name=name,
-                folder_created=folder_created,
-                message=f"ドキュメントタイプ '{name}' を登録しました。"
-                + (f" フォルダ '{folder_name}' を作成しました。" if folder_created else ""),
+                folder_created=False,
+                message=f"グローバルドキュメントタイプ '{name}' を登録しました。",
             )
-        except Exception as e:
-            logger.error(f"Failed to save document type: {e}")
-            return RegisterDocumentTypeResult(
-                success=False,
-                type_id=type_id,
-                message=f"ドキュメントタイプの保存に失敗しました: {e}",
-            )
+
+        else:
+            # Project-specific type
+            # Get current project config
+            config = self.project_tools.get_project_config(user=user)
+            if not config:
+                return RegisterDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message="プロジェクトが選択されていません。",
+                )
+
+            # Check for existing project type with same ID
+            for existing in config.document_types:
+                if existing.get("type_id") == type_id:
+                    return RegisterDocumentTypeResult(
+                        success=False,
+                        type_id=type_id,
+                        message=f"プロジェクトタイプ '{type_id}' は既に登録されています。",
+                    )
+
+            # Create folder in Google Drive if requested
+            folder_created = False
+            if create_folder and config.root_folder_id:
+                try:
+                    existing_folder = self.drive.find_folder_by_name(
+                        name=folder_name,
+                        parent_id=config.root_folder_id,
+                    )
+                    if not existing_folder:
+                        self.drive.create_folder(
+                            name=folder_name,
+                            parent_id=config.root_folder_id,
+                        )
+                        folder_created = True
+                        logger.info(f"Created folder '{folder_name}' for document type '{type_id}'")
+                except Exception as e:
+                    logger.warning(f"Failed to create folder '{folder_name}': {e}")
+
+            # Add to project config
+            config.document_types.append(new_type.to_dict())
+
+            # Save updated config
+            try:
+                config_data = {
+                    "spreadsheet_id": config.spreadsheet_id,
+                    "root_folder_id": config.root_folder_id,
+                    "sheets": config.sheets.to_dict() if config.sheets else {},
+                    "drive": config.drive.to_dict() if config.drive else {},
+                    "docs": config.docs.to_dict() if config.docs else {},
+                    "options": config.options.to_dict() if config.options else {},
+                    "document_types": config.document_types,
+                    "created_at": config.created_at.isoformat() if config.created_at else "",
+                }
+                self.project_tools._save_project_config_with_fallback(
+                    project_id=config.project_id,
+                    name=config.name,
+                    description=config.description,
+                    config_data=config_data,
+                )
+                logger.info(f"Registered project document type '{type_id}' ({name})")
+
+                return RegisterDocumentTypeResult(
+                    success=True,
+                    type_id=type_id,
+                    name=name,
+                    folder_created=folder_created,
+                    message=f"プロジェクトドキュメントタイプ '{name}' を登録しました。"
+                    + (f" フォルダ '{folder_name}' を作成しました。" if folder_created else ""),
+                )
+            except Exception as e:
+                logger.error(f"Failed to save document type: {e}")
+                return RegisterDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message=f"ドキュメントタイプの保存に失敗しました: {e}",
+                )
 
     def delete_document_type(
         self,
         type_id: str,
+        scope: str = "global",
         user: Optional[str] = None,
     ) -> DeleteDocumentTypeResult:
         """Delete a custom document type.
 
         Args:
             type_id: ID of the document type to delete
+            scope: "global" for shared types, "project" for project-specific
             user: User ID
 
         Returns:
@@ -855,69 +904,96 @@ class DocumentTools:
         """
         user = user or self.user_name
 
-        # Check for built-in type
-        for builtin in BUILTIN_DOCUMENT_TYPES:
-            if builtin.type_id == type_id:
+        # Validate scope
+        if scope not in ("global", "project"):
+            return DeleteDocumentTypeResult(
+                success=False,
+                type_id=type_id,
+                message=f"scope は 'global' または 'project' である必要があります: {scope}",
+            )
+
+        if scope == "global":
+            # Delete from global storage
+            global_storage = GlobalDocumentTypeStorage()
+
+            if not global_storage.exists(type_id):
                 return DeleteDocumentTypeResult(
                     success=False,
                     type_id=type_id,
-                    message=f"'{type_id}' はビルトインタイプのため削除できません。",
+                    message=f"グローバルタイプ '{type_id}' が見つかりません。",
                 )
 
-        # Get current project config
-        config = self.project_tools.get_project_config(user=user)
-        if not config:
-            return DeleteDocumentTypeResult(
-                success=False,
-                type_id=type_id,
-                message="プロジェクトが選択されていません。",
-            )
+            if not global_storage.delete(type_id):
+                return DeleteDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message=f"グローバルタイプの削除に失敗しました。",
+                )
 
-        # Find and remove the document type
-        original_count = len(config.document_types)
-        config.document_types = [
-            dt for dt in config.document_types if dt.get("type_id") != type_id
-        ]
-
-        if len(config.document_types) == original_count:
-            return DeleteDocumentTypeResult(
-                success=False,
-                type_id=type_id,
-                message=f"ドキュメントタイプ '{type_id}' が見つかりません。",
-            )
-
-        # Save updated config
-        try:
-            config_data = {
-                "spreadsheet_id": config.spreadsheet_id,
-                "root_folder_id": config.root_folder_id,
-                "sheets": config.sheets.to_dict() if config.sheets else {},
-                "drive": config.drive.to_dict() if config.drive else {},
-                "docs": config.docs.to_dict() if config.docs else {},
-                "options": config.options.to_dict() if config.options else {},
-                "document_types": config.document_types,
-                "created_at": config.created_at.isoformat() if config.created_at else "",
-            }
-            self.project_tools._save_project_config_with_fallback(
-                project_id=config.project_id,
-                name=config.name,
-                description=config.description,
-                config_data=config_data,
-            )
-            logger.info(f"Deleted document type '{type_id}'")
+            logger.info(f"Deleted global document type '{type_id}'")
 
             return DeleteDocumentTypeResult(
                 success=True,
                 type_id=type_id,
-                message=f"ドキュメントタイプ '{type_id}' を削除しました。",
+                message=f"グローバルドキュメントタイプ '{type_id}' を削除しました。",
             )
-        except Exception as e:
-            logger.error(f"Failed to delete document type: {e}")
-            return DeleteDocumentTypeResult(
-                success=False,
-                type_id=type_id,
-                message=f"ドキュメントタイプの削除に失敗しました: {e}",
-            )
+
+        else:
+            # Project-specific type
+            # Get current project config
+            config = self.project_tools.get_project_config(user=user)
+            if not config:
+                return DeleteDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message="プロジェクトが選択されていません。",
+                )
+
+            # Find and remove the document type
+            original_count = len(config.document_types)
+            config.document_types = [
+                dt for dt in config.document_types if dt.get("type_id") != type_id
+            ]
+
+            if len(config.document_types) == original_count:
+                return DeleteDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message=f"プロジェクトタイプ '{type_id}' が見つかりません。",
+                )
+
+            # Save updated config
+            try:
+                config_data = {
+                    "spreadsheet_id": config.spreadsheet_id,
+                    "root_folder_id": config.root_folder_id,
+                    "sheets": config.sheets.to_dict() if config.sheets else {},
+                    "drive": config.drive.to_dict() if config.drive else {},
+                    "docs": config.docs.to_dict() if config.docs else {},
+                    "options": config.options.to_dict() if config.options else {},
+                    "document_types": config.document_types,
+                    "created_at": config.created_at.isoformat() if config.created_at else "",
+                }
+                self.project_tools._save_project_config_with_fallback(
+                    project_id=config.project_id,
+                    name=config.name,
+                    description=config.description,
+                    config_data=config_data,
+                )
+                logger.info(f"Deleted project document type '{type_id}'")
+
+                return DeleteDocumentTypeResult(
+                    success=True,
+                    type_id=type_id,
+                    message=f"プロジェクトドキュメントタイプ '{type_id}' を削除しました。",
+                )
+            except Exception as e:
+                logger.error(f"Failed to delete document type: {e}")
+                return DeleteDocumentTypeResult(
+                    success=False,
+                    type_id=type_id,
+                    message=f"ドキュメントタイプの削除に失敗しました: {e}",
+                )
 
     def get_document_type(
         self,

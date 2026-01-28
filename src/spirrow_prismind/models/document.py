@@ -15,7 +15,7 @@ class DocumentType:
     template_doc_id: str = ""  # Optional Google Docs template ID
     description: str = ""
     fields: list[str] = field(default_factory=list)  # Custom metadata fields
-    is_builtin: bool = False  # True for default types (設計書, 実装手順書)
+    is_global: bool = False  # True for global types, False for project-specific
 
     def to_dict(self) -> dict:
         """Convert to dictionary for storage."""
@@ -26,12 +26,14 @@ class DocumentType:
             "template_doc_id": self.template_doc_id,
             "description": self.description,
             "fields": self.fields,
-            "is_builtin": self.is_builtin,
+            "is_global": self.is_global,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "DocumentType":
         """Create from dictionary."""
+        # Support both is_global and legacy is_builtin
+        is_global = data.get("is_global", data.get("is_builtin", False))
         return cls(
             type_id=data.get("type_id", ""),
             name=data.get("name", ""),
@@ -39,27 +41,8 @@ class DocumentType:
             template_doc_id=data.get("template_doc_id", ""),
             description=data.get("description", ""),
             fields=data.get("fields", []),
-            is_builtin=data.get("is_builtin", False),
+            is_global=is_global,
         )
-
-
-# Built-in document types
-BUILTIN_DOCUMENT_TYPES = [
-    DocumentType(
-        type_id="design",
-        name="設計書",
-        folder_name="設計書",
-        description="設計に関するドキュメント",
-        is_builtin=True,
-    ),
-    DocumentType(
-        type_id="procedure",
-        name="実装手順書",
-        folder_name="実装手順書",
-        description="実装手順に関するドキュメント",
-        is_builtin=True,
-    ),
-]
 
 
 @dataclass

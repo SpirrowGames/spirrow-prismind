@@ -548,22 +548,29 @@ class ProjectTools:
                 logger.error(f"Failed to write Catalog template: {e}")
         
         # Step 7: Create folders if requested
+        # Note: Default folders are no longer created. Document type folders are
+        # created on-demand when document types are registered with create_folder=True.
         if create_folders:
-            try:
-                folder_names = [
+            # Filter out empty folder names (no default folders)
+            folder_names = [
+                name for name in [
                     config.drive.design_folder,
                     config.drive.procedure_folder,
                 ]
-                
-                created_folders = self.drive.create_folder_structure(
-                    root_folder_id,
-                    folder_names,
-                )
-                
-                folders_created = list(created_folders.keys())
-                
-            except Exception as e:
-                logger.error(f"Failed to create folders: {e}")
+                if name  # Only include non-empty names
+            ]
+
+            if folder_names:
+                try:
+                    created_folders = self.drive.create_folder_structure(
+                        root_folder_id,
+                        folder_names,
+                    )
+
+                    folders_created = list(created_folders.keys())
+
+                except Exception as e:
+                    logger.error(f"Failed to create folders: {e}")
         
         # Step 8: Set as current project
         self._set_current_project_with_fallback(user, project)

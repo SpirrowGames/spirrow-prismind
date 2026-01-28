@@ -189,7 +189,7 @@ class TestCreateDocument:
         assert "register_document_type" in result.message
 
     def test_create_document_success(
-        self, document_tools, mock_docs_client, mock_drive_client, project_tools
+        self, document_tools, mock_docs_client, mock_drive_client, project_tools, setup_standard_global_types
     ):
         """Test successful document creation."""
         # Setup project
@@ -671,7 +671,7 @@ class TestUpdateDocumentExtended:
     """Tests for update_document with extended fields."""
 
     def test_update_document_doc_type_change(
-        self, document_tools, mock_rag_client, mock_drive_client, project_tools
+        self, document_tools, mock_rag_client, mock_drive_client, project_tools, setup_standard_global_types
     ):
         """Test updating document with doc_type change moves file."""
         # Setup project
@@ -757,8 +757,29 @@ class TestUpdateDocumentExtended:
 class TestListDocumentTypes:
     """Tests for list_document_types method."""
 
-    def test_list_document_types_returns_builtin(self, document_tools):
-        """Test that built-in types are always returned."""
+    def test_list_document_types_returns_global(self, document_tools, tmp_path, monkeypatch):
+        """Test that global types are returned."""
+        from spirrow_prismind.tools.global_document_types import GlobalDocumentTypeStorage
+        from spirrow_prismind.models.document import DocumentType
+
+        # Reset singleton and use temp storage
+        GlobalDocumentTypeStorage.reset_instance()
+        storage = GlobalDocumentTypeStorage(tmp_path / ".prismind_global_doc_types.json")
+
+        # Register test global types
+        storage.register(DocumentType(
+            type_id="design",
+            name="Design Document",
+            folder_name="Design",
+            is_global=True,
+        ))
+        storage.register(DocumentType(
+            type_id="procedure",
+            name="Implementation Guide",
+            folder_name="Procedures",
+            is_global=True,
+        ))
+
         result = document_tools.list_document_types()
 
         assert result.success is True
@@ -768,19 +789,43 @@ class TestListDocumentTypes:
         assert "design" in type_ids
         assert "procedure" in type_ids
 
-    def test_list_document_types_without_project(self, document_tools):
-        """Test list_document_types works without active project."""
-        # No project setup - should still return built-in types
+        # Cleanup
+        GlobalDocumentTypeStorage.reset_instance()
+
+    def test_list_document_types_without_project(self, document_tools, tmp_path):
+        """Test list_document_types works without active project (returns global types)."""
+        from spirrow_prismind.tools.global_document_types import GlobalDocumentTypeStorage
+
+        # Reset singleton to start fresh (no global types)
+        GlobalDocumentTypeStorage.reset_instance()
+        storage = GlobalDocumentTypeStorage(tmp_path / ".prismind_global_doc_types.json")
+
         result = document_tools.list_document_types()
 
         assert result.success is True
-        assert len(result.document_types) == 2  # Only built-in types
+        # Without project and without global types, should return empty
+        assert len(result.document_types) == 0
+
+        # Cleanup
+        GlobalDocumentTypeStorage.reset_instance()
 
     def test_list_document_types_with_custom_types(
-        self, document_tools, project_tools, mock_drive_client, mock_rag_client
+        self, document_tools, project_tools, mock_drive_client, mock_rag_client, tmp_path
     ):
         """Test list_document_types includes custom registered types."""
         from spirrow_prismind.tools.project_tools import ProjectTools
+        from spirrow_prismind.tools.global_document_types import GlobalDocumentTypeStorage
+        from spirrow_prismind.models.document import DocumentType
+
+        # Reset singleton and use temp storage with some global types
+        GlobalDocumentTypeStorage.reset_instance()
+        storage = GlobalDocumentTypeStorage(tmp_path / ".prismind_global_doc_types.json")
+        storage.register(DocumentType(
+            type_id="design",
+            name="Design Document",
+            folder_name="Design",
+            is_global=True,
+        ))
 
         # Setup project
         project_tools.setup_project(
@@ -792,7 +837,7 @@ class TestListDocumentTypes:
             create_folders=False,
         )
 
-        # Add custom document type
+        # Add custom document type to project
         custom_doc_type = {
             "type_id": "meeting_notes",
             "name": "議事録",
@@ -800,7 +845,7 @@ class TestListDocumentTypes:
             "template_doc_id": "",
             "description": "会議の議事録",
             "fields": [],
-            "is_builtin": False,
+            "is_global": False,
         }
 
         # Update the project config in RAG to include custom document type
@@ -818,9 +863,11 @@ class TestListDocumentTypes:
         result = document_tools.list_document_types()
 
         assert result.success is True
-        assert len(result.document_types) >= 3  # 2 builtin + 1 custom
+        assert len(result.document_types) >= 2  # 1 global + 1 custom
 
         type_ids = [dt.type_id for dt in result.document_types]
-        assert "design" in type_ids
-        assert "procedure" in type_ids
-        assert "meeting_notes" in type_ids
+        assert "design" in type_ids  # Global type
+        assert "meeting_notes" in type_ids  # Project type
+
+        # Cleanup
+        GlobalDocumentTypeStorage.reset_instance()

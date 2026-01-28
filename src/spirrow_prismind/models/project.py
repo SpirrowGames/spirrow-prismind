@@ -24,8 +24,8 @@ class SheetsConfig:
 @dataclass
 class DriveConfig:
     """Google Drive folder configuration for a project."""
-    design_folder: str = "設計書"
-    procedure_folder: str = "実装手順書"
+    design_folder: str = ""  # No default folder - created on-demand when registering types
+    procedure_folder: str = ""  # No default folder - created on-demand when registering types
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -163,8 +163,8 @@ class ProjectConfig:
                 catalog=sheets_data.get("catalog", "目録"),
             ),
             drive=DriveConfig(
-                design_folder=drive_data.get("design_folder", "設計書"),
-                procedure_folder=drive_data.get("procedure_folder", "実装手順書"),
+                design_folder=drive_data.get("design_folder", ""),
+                procedure_folder=drive_data.get("procedure_folder", ""),
             ),
             docs=DocsConfig(
                 template_folder_id=docs_data.get("template_folder_id", ""),
