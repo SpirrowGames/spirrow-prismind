@@ -361,6 +361,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Phase-task filter (e.g., P4-T01)",
                 },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
+                },
             },
         },
     ),
@@ -394,6 +398,10 @@ TOOLS = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Search keywords",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
                 },
             },
             "required": ["name", "doc_type", "content", "phase_task"],
@@ -429,6 +437,10 @@ TOOLS = [
                 "feature": {
                     "type": "string",
                     "description": "New feature value",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
                 },
             },
             "required": ["doc_id"],
@@ -1422,6 +1434,7 @@ class PrismindServer:
                 doc_id=args.get("doc_id"),
                 doc_type=args.get("doc_type"),
                 phase_task=args.get("phase_task"),
+                project=args.get("project"),
             )
             
             response = {
@@ -1455,6 +1468,7 @@ class PrismindServer:
                 phase_task=args["phase_task"],
                 feature=args.get("feature"),
                 keywords=args.get("keywords"),
+                project=args.get("project"),
             )
             return {
                 "success": result.success,
@@ -1481,6 +1495,7 @@ class PrismindServer:
                 content=args.get("content"),
                 append=args.get("append", False),
                 metadata=metadata if metadata else None,
+                project=args.get("project"),
             )
             return {
                 "success": result.success,

@@ -752,3 +752,75 @@ class TestUpdateDocumentExtended:
 
         assert result.success is True
         assert "phase_task" in result.updated_fields
+
+
+class TestListDocumentTypes:
+    """Tests for list_document_types method."""
+
+    def test_list_document_types_returns_builtin(self, document_tools):
+        """Test that built-in types are always returned."""
+        result = document_tools.list_document_types()
+
+        assert result.success is True
+        assert len(result.document_types) >= 2
+
+        type_ids = [dt.type_id for dt in result.document_types]
+        assert "design" in type_ids
+        assert "procedure" in type_ids
+
+    def test_list_document_types_without_project(self, document_tools):
+        """Test list_document_types works without active project."""
+        # No project setup - should still return built-in types
+        result = document_tools.list_document_types()
+
+        assert result.success is True
+        assert len(result.document_types) == 2  # Only built-in types
+
+    def test_list_document_types_with_custom_types(
+        self, document_tools, project_tools, mock_drive_client, mock_rag_client
+    ):
+        """Test list_document_types includes custom registered types."""
+        from spirrow_prismind.tools.project_tools import ProjectTools
+
+        # Setup project
+        project_tools.setup_project(
+            project="custom_types_proj",
+            name="Custom Types Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add custom document type
+        custom_doc_type = {
+            "type_id": "meeting_notes",
+            "name": "議事録",
+            "folder_name": "議事録",
+            "template_doc_id": "",
+            "description": "会議の議事録",
+            "fields": [],
+            "is_builtin": False,
+        }
+
+        # Update the project config in RAG to include custom document type
+        # This simulates what register_document_type does
+        project_doc = mock_rag_client.get_project_config("custom_types_proj")
+        if project_doc:
+            updated_metadata = dict(project_doc.metadata)
+            updated_metadata["document_types"] = [custom_doc_type]
+            mock_rag_client.update_document(
+                f"project:custom_types_proj",
+                content=project_doc.content,
+                metadata=updated_metadata,
+            )
+
+        result = document_tools.list_document_types()
+
+        assert result.success is True
+        assert len(result.document_types) >= 3  # 2 builtin + 1 custom
+
+        type_ids = [dt.type_id for dt in result.document_types]
+        assert "design" in type_ids
+        assert "procedure" in type_ids
+        assert "meeting_notes" in type_ids

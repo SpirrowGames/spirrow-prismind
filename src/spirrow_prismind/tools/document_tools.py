@@ -66,26 +66,28 @@ class DocumentTools:
         doc_id: Optional[str] = None,
         doc_type: Optional[str] = None,
         phase_task: Optional[str] = None,
+        project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> DocumentResult:
         """Get a document by search or direct ID.
-        
+
         Args:
             query: Search query
             doc_id: Direct document ID
             doc_type: Document type filter
             phase_task: Phase-task filter (e.g., "P4-T01")
+            project: Project ID (uses current project if omitted)
             user: User ID
-            
+
         Returns:
             DocumentResult
         """
         user = user or self.user_name
-        
+
         # If doc_id is specified, get directly
         if doc_id:
             return self._get_document_by_id(doc_id)
-        
+
         # Otherwise, search catalog
         if not query:
             return DocumentResult(
@@ -94,9 +96,9 @@ class DocumentTools:
                 candidates=[],
                 message="検索クエリまたはドキュメントIDを指定してください。",
             )
-        
-        # Get current project
-        project_id = self.project_tools.get_current_project_id(user)
+
+        # Determine project: explicit > current project
+        project_id = project or self.project_tools.get_current_project_id(user)
         
         # Search catalog in RAG
         result = self.rag.search_catalog(
@@ -201,10 +203,11 @@ class DocumentTools:
         keywords: Optional[list[str]] = None,
         reference_timing: Optional[str] = None,
         related_docs: Optional[list[str]] = None,
+        project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> CreateDocumentResult:
         """Create a new document and register in catalog.
-        
+
         Args:
             name: Document name
             doc_type: Document type (設計書/実装手順書/etc.)
@@ -214,15 +217,19 @@ class DocumentTools:
             keywords: Search keywords (auto-generated if None)
             reference_timing: When to reference (設計時/実装時/etc.)
             related_docs: Related document IDs
+            project: Project ID (uses current project if omitted)
             user: User ID
-            
+
         Returns:
             CreateDocumentResult
         """
         user = user or self.user_name
 
-        # Get current project config
-        config = self.project_tools.get_project_config(user=user)
+        # Determine project config: explicit project > current project
+        if project:
+            config = self.project_tools.get_project_config(project=project, user=user)
+        else:
+            config = self.project_tools.get_project_config(user=user)
         if not config:
             return CreateDocumentResult(
                 success=False,
@@ -378,6 +385,7 @@ class DocumentTools:
         content: Optional[str] = None,
         append: bool = False,
         metadata: Optional[dict] = None,
+        project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> UpdateDocumentResult:
         """Update a document.
@@ -387,6 +395,7 @@ class DocumentTools:
             content: New content (None to keep)
             append: If True, append content. If False, replace.
             metadata: Metadata updates (can include doc_type, phase_task, feature)
+            project: Project ID (uses current project if omitted)
             user: User ID
 
         Returns:
@@ -417,8 +426,11 @@ class DocumentTools:
                         message=f"ドキュメントタイプ '{new_doc_type}' は登録されていません。",
                     )
 
-                # Get project config
-                config = self.project_tools.get_project_config(user=user)
+                # Determine project config: explicit project > current project
+                if project:
+                    config = self.project_tools.get_project_config(project=project, user=user)
+                else:
+                    config = self.project_tools.get_project_config(user=user)
                 if config and config.root_folder_id and doc_type_obj.folder_name:
                     try:
                         # Ensure target folder exists
@@ -461,7 +473,11 @@ class DocumentTools:
                     updated_fields.extend(metadata.keys())
 
                     # Update Sheets catalog if doc_type, phase_task, or feature changed
-                    config = self.project_tools.get_project_config(user=user)
+                    # Determine project config: explicit project > current project
+                    if project:
+                        config = self.project_tools.get_project_config(project=project, user=user)
+                    else:
+                        config = self.project_tools.get_project_config(user=user)
                     if config and config.spreadsheet_id:
                         self._update_sheets_catalog_row(
                             config=config,

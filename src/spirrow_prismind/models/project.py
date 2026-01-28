@@ -1,7 +1,7 @@
 """Project configuration model (stored in RAG)."""
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
@@ -16,12 +16,20 @@ class SheetsConfig:
     progress: str = "進捗"
     catalog: str = "目録"
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return asdict(self)
+
 
 @dataclass
 class DriveConfig:
     """Google Drive folder configuration for a project."""
     design_folder: str = "設計書"
     procedure_folder: str = "実装手順書"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return asdict(self)
 
 
 @dataclass
@@ -30,12 +38,20 @@ class DocsConfig:
     template_folder_id: str = ""
     default_template: str = ""
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return asdict(self)
+
 
 @dataclass
 class ProjectOptions:
     """Project options."""
     auto_sync_catalog: bool = True
     auto_create_folders: bool = True
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return asdict(self)
 
 
 @dataclass
