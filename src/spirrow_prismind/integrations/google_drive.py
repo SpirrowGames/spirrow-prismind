@@ -295,39 +295,38 @@ class GoogleDriveClient:
             logger.error(f"Failed to list folder contents for '{folder_id}': {e}")
             raise
 
-    def find_folder_by_name(
+    def find_folders_by_name(
         self,
         name: str,
         parent_id: Optional[str] = None,
-    ) -> Optional[FileInfo]:
-        """Find a folder by name.
-        
+    ) -> list[FileInfo]:
+        """Find all folders with a given name.
+
         Args:
             name: Folder name to search for
             parent_id: Parent folder ID to search in (None for anywhere)
-            
+
         Returns:
-            FileInfo if found, None otherwise
-            
+            List of FileInfo for all matching folders (sorted by creation time)
+
         Raises:
             HttpError: If the API request fails
         """
         try:
             query = f"name = '{name}' and mimeType = '{MimeType.FOLDER}' and trashed = false"
-            
+
             if parent_id:
                 query += f" and '{parent_id}' in parents"
-            
+
             results = self.service.files().list(
                 q=query,
                 fields="files(id, name, mimeType, parents, webViewLink, createdTime, modifiedTime)",
-                pageSize=1,
+                orderBy="createdTime",  # Oldest first
             ).execute()
-            
-            files = results.get("files", [])
-            if files:
-                item = files[0]
-                return FileInfo(
+
+            folders = []
+            for item in results.get("files", []):
+                folders.append(FileInfo(
                     file_id=item.get("id", ""),
                     name=item.get("name", ""),
                     mime_type=item.get("mimeType", ""),
@@ -335,19 +334,43 @@ class GoogleDriveClient:
                     web_view_link=item.get("webViewLink", ""),
                     created_time=item.get("createdTime", ""),
                     modified_time=item.get("modifiedTime", ""),
-                )
-            
-            return None
+                ))
+
+            return folders
         except HttpError as e:
-            logger.error(f"Failed to find folder '{name}': {e}")
+            logger.error(f"Failed to find folders '{name}': {e}")
             raise
+
+    def find_folder_by_name(
+        self,
+        name: str,
+        parent_id: Optional[str] = None,
+    ) -> Optional[FileInfo]:
+        """Find a folder by name.
+
+        Args:
+            name: Folder name to search for
+            parent_id: Parent folder ID to search in (None for anywhere)
+
+        Returns:
+            FileInfo if found, None otherwise (returns oldest if multiple exist)
+
+        Raises:
+            HttpError: If the API request fails
+        """
+        folders = self.find_folders_by_name(name, parent_id)
+        return folders[0] if folders else None
 
     def create_folder_if_not_exists(
         self,
         name: str,
         parent_id: Optional[str] = None,
     ) -> tuple[FileInfo, bool]:
-        """Create a folder if it doesn't exist.
+        """Create a folder if it doesn't exist, with race condition protection.
+
+        This method handles the case where concurrent requests might both try
+        to create the same folder. After creating, it verifies no duplicates
+        were created, and returns the oldest folder if any exist.
 
         Args:
             name: Folder name
@@ -359,11 +382,44 @@ class GoogleDriveClient:
         Raises:
             HttpError: If the API request fails
         """
+        # First check for existing folder
         existing = self.find_folder_by_name(name, parent_id)
         if existing:
             return existing, False
 
+        # Create the folder
         new_folder = self.create_folder(name, parent_id)
+
+        # Post-creation check: verify for race condition duplicates
+        # Small delay to allow other concurrent creates to complete
+        all_folders = self.find_folders_by_name(name, parent_id)
+
+        if len(all_folders) > 1:
+            # Race condition detected - multiple folders with same name
+            # Use the oldest folder (first in list, sorted by createdTime)
+            canonical_folder = all_folders[0]
+            logger.warning(
+                f"Duplicate folders detected for '{name}' (count: {len(all_folders)}). "
+                f"Using oldest folder: {canonical_folder.file_id}"
+            )
+
+            # Clean up duplicates by moving them to trash
+            for duplicate in all_folders[1:]:
+                try:
+                    self.delete_file(duplicate.file_id, permanent=False)
+                    logger.info(
+                        f"Moved duplicate folder '{name}' ({duplicate.file_id}) to trash"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to trash duplicate folder {duplicate.file_id}: {e}"
+                    )
+
+            # Return the canonical folder
+            # Set created=True only if our created folder is the canonical one
+            was_created = canonical_folder.file_id == new_folder.file_id
+            return canonical_folder, was_created
+
         return new_folder, True
 
     def ensure_folder_path(
@@ -606,4 +662,75 @@ class GoogleDriveClient:
             )
         except HttpError as e:
             logger.error(f"Failed to create document '{name}': {e}")
+            raise
+
+    def deduplicate_folders(
+        self,
+        parent_id: str,
+        dry_run: bool = True,
+    ) -> dict[str, list[FileInfo]]:
+        """Find and optionally remove duplicate folders in a parent folder.
+
+        This method identifies folders with the same name and optionally
+        moves duplicates to trash, keeping only the oldest folder.
+
+        Args:
+            parent_id: Parent folder ID to scan for duplicates
+            dry_run: If True, only report duplicates without deleting
+
+        Returns:
+            Dict mapping folder name to list of duplicate FileInfo objects
+            (excludes the canonical/kept folder)
+
+        Raises:
+            HttpError: If the API request fails
+        """
+        try:
+            # Get all folders in parent
+            contents = self.list_folder_contents(parent_id)
+
+            # Group by name
+            name_to_folders: dict[str, list[FileInfo]] = {}
+            for folder in contents.subfolders:
+                if folder.name not in name_to_folders:
+                    name_to_folders[folder.name] = []
+                name_to_folders[folder.name].append(folder)
+
+            # Find duplicates and process
+            duplicates: dict[str, list[FileInfo]] = {}
+
+            for name, folders in name_to_folders.items():
+                if len(folders) > 1:
+                    # Sort by creation time (oldest first)
+                    sorted_folders = sorted(
+                        folders,
+                        key=lambda f: f.created_time or "",
+                    )
+
+                    canonical = sorted_folders[0]
+                    dups = sorted_folders[1:]
+                    duplicates[name] = dups
+
+                    logger.info(
+                        f"Found {len(dups)} duplicate(s) of folder '{name}'. "
+                        f"Keeping: {canonical.file_id}"
+                    )
+
+                    if not dry_run:
+                        for dup in dups:
+                            try:
+                                self.delete_file(dup.file_id, permanent=False)
+                                logger.info(
+                                    f"Moved duplicate folder '{name}' "
+                                    f"({dup.file_id}) to trash"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to trash duplicate folder "
+                                    f"{dup.file_id}: {e}"
+                                )
+
+            return duplicates
+        except HttpError as e:
+            logger.error(f"Failed to deduplicate folders in '{parent_id}': {e}")
             raise
