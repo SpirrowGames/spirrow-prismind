@@ -1080,7 +1080,28 @@ class TaskProgress:
     blockers: list[str]             # ブロッカーがあれば
     completed_at: datetime          # 完了日時（完了時のみ）
     notes: str                      # 備考
+    # v2 拡張フィールド
+    priority: str = "medium"        # high / medium / low
+    category: str = ""              # bug / feature / refactor / design / test 等
+    blocked_by: list[str] = []      # 依存タスクID（例: ["T01", "T02"]）
 ```
+
+**スプレッドシートカラム構成：**
+
+| カラム | 項目 | 備考 |
+|--------|------|------|
+| A | フェーズ | Phase 4 等 |
+| B | タスクID | T01 等 |
+| C | タスク名 | |
+| D | ステータス | not_started/in_progress/completed/blocked |
+| E | ブロッカー | カンマ区切り |
+| F | 完了日 | ISO形式 |
+| G | 備考 | |
+| H | 優先度 | high/medium/low（v2） |
+| I | カテゴリ | bug/feature/refactor/design/test（v2） |
+| J | 依存タスク | カンマ区切りのタスクID（v2） |
+
+※ H〜J列は後方互換性あり。古いシートでも動作。
 
 **内部処理フロー：**
 
@@ -1103,6 +1124,9 @@ def update_progress(
     status: str = None,             # 任意: ステータス変更
     blockers: list[str] = None,     # 任意: ブロッカー更新
     notes: str = None,              # 任意: 備考更新
+    priority: str = None,           # 任意: 優先度（high/medium/low）（v2）
+    category: str = None,           # 任意: カテゴリ（v2）
+    blocked_by: list[str] = None,   # 任意: 依存タスクID（v2）
     new_task: TaskDefinition = None # 任意: 新規タスク追加
 ) -> UpdateProgressResult
 
@@ -1112,6 +1136,9 @@ class TaskDefinition:
     task_id: str                    # 例: "T02"
     name: str                       # 例: "BTノード接続"
     description: str = None
+    priority: str = "medium"        # 優先度（v2）
+    category: str = ""              # カテゴリ（v2）
+    blocked_by: list[str] = []      # 依存タスクID（v2）
 ```
 
 **出力：**
@@ -1243,6 +1270,7 @@ class KnowledgeEntry:
 
 | 日付 | 内容 |
 |------|------|
+| 2025-01-29 | TaskProgressにv2拡張フィールド追加（priority, category, blocked_by）|
 | 2025-01-28 | create_documentの内部処理フローを「作成→移動」から「最初から正しいフォルダに作成」に変更 |
 | 2025-01-12 | setup_projectに重複チェック・類似プロジェクト検索機能追加 |
 | 2025-01-12 | プロジェクト管理ツール追加、設定管理方式変更、Google Docs API追加 |

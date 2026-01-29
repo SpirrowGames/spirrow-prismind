@@ -87,8 +87,8 @@ class ProgressTools:
                     message=f"進捗シート '{config.sheets.progress}' が見つかりません。プロジェクト設定を確認してください。",
                 )
 
-            # Read from Google Sheets
-            range_name = f"{config.sheets.progress}!A:G"
+            # Read from Google Sheets (A:J for v2 extended columns)
+            range_name = f"{config.sheets.progress}!A:J"
             result = self.sheets.read_range(
                 spreadsheet_id=config.spreadsheet_id,
                 range_name=range_name,
@@ -194,6 +194,9 @@ class ProgressTools:
         phase: Optional[str] = None,
         blockers: Optional[list[str]] = None,
         notes: Optional[str] = None,
+        priority: Optional[str] = None,
+        category: Optional[str] = None,
+        blocked_by: Optional[list[str]] = None,
         project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> UpdateProgressResult:
@@ -205,6 +208,9 @@ class ProgressTools:
             phase: Phase name (required if task_id is ambiguous)
             blockers: New blockers list (None to keep)
             notes: Notes (None to keep)
+            priority: New priority (high/medium/low, None to keep)
+            category: New category (bug/feature/refactor/design/test, None to keep)
+            blocked_by: New blocked_by list (None to keep)
             project: Project ID (None for current)
             user: User ID
 
@@ -252,8 +258,8 @@ class ProgressTools:
                     message=f"進捗シート '{config.sheets.progress}' が見つかりません。プロジェクト設定を確認してください。",
                 )
 
-            # Read current data
-            range_name = f"{config.sheets.progress}!A:G"
+            # Read current data (A:J for v2 extended columns)
+            range_name = f"{config.sheets.progress}!A:J"
             result = self.sheets.read_range(
                 spreadsheet_id=config.spreadsheet_id,
                 range_name=range_name,
@@ -300,8 +306,8 @@ class ProgressTools:
             updated_fields = ["status"]
             target_row = rows[target_row_idx]
 
-            # Ensure row has enough columns
-            while len(target_row) < 7:
+            # Ensure row has enough columns (10 for v2 extended columns)
+            while len(target_row) < 10:
                 target_row.append("")
 
             # Update status
@@ -325,8 +331,23 @@ class ProgressTools:
                 target_row[6] = notes
                 updated_fields.append("notes")
 
-            # Write back to Sheets
-            update_range = f"{config.sheets.progress}!A{target_row_idx + 1}:G{target_row_idx + 1}"
+            # Update v2 extended fields
+            if priority is not None:
+                valid_priorities = ["high", "medium", "low"]
+                if priority in valid_priorities:
+                    target_row[7] = priority
+                    updated_fields.append("priority")
+
+            if category is not None:
+                target_row[8] = category
+                updated_fields.append("category")
+
+            if blocked_by is not None:
+                target_row[9] = ",".join(blocked_by)
+                updated_fields.append("blocked_by")
+
+            # Write back to Sheets (A:J for v2 extended columns)
+            update_range = f"{config.sheets.progress}!A{target_row_idx + 1}:J{target_row_idx + 1}"
             self.sheets.update_range(
                 spreadsheet_id=config.spreadsheet_id,
                 range_name=update_range,
@@ -366,6 +387,9 @@ class ProgressTools:
         task_id: str,
         name: str,
         description: str = "",
+        priority: str = "medium",
+        category: str = "",
+        blocked_by: Optional[list[str]] = None,
         project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> UpdateProgressResult:
@@ -376,6 +400,9 @@ class ProgressTools:
             task_id: Task ID (e.g., "T01")
             name: Task name
             description: Task description (stored in notes)
+            priority: Task priority (high/medium/low, default: medium)
+            category: Task category (bug/feature/refactor/design/test etc.)
+            blocked_by: List of task IDs this task depends on (e.g., ["T01", "T02"])
             project: Project ID (None for current)
             user: User ID
 
@@ -414,21 +441,29 @@ class ProgressTools:
                     message=f"進捗シート '{config.sheets.progress}' が見つかりません。プロジェクト設定を確認してください。",
                 )
 
-            # Create task row
+            # Validate priority
+            valid_priorities = ["high", "medium", "low"]
+            if priority not in valid_priorities:
+                priority = "medium"
+
+            # Create task row with v2 extended fields
             task = TaskProgress(
                 task_id=task_id,
                 name=name,
                 status="not_started",
                 blockers=[],
                 notes=description,
+                priority=priority,
+                category=category,
+                blocked_by=blocked_by or [],
             )
 
             row = task_to_sheet_row(phase, task)
 
-            # Append to sheet
+            # Append to sheet (A:J for v2 extended columns)
             self.sheets.append_rows(
                 spreadsheet_id=config.spreadsheet_id,
-                range_name=f"{config.sheets.progress}!A:G",
+                range_name=f"{config.sheets.progress}!A:J",
                 values=[row],
             )
 
