@@ -126,7 +126,7 @@ TOOLS = [
     ),
     Tool(
         name="end_session",
-        description="End the session and save state.",
+        description="End the session and save state. Uses current project if project is not specified.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -147,12 +147,16 @@ TOOLS = [
                     "type": "string",
                     "description": "Notes for the next session",
                 },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
+                },
             },
         },
     ),
     Tool(
         name="save_session",
-        description="Save session state without ending the session.",
+        description="Save session state without ending the session. Uses current project if project is not specified.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -180,6 +184,40 @@ TOOLS = [
                 "current_task": {
                     "type": "string",
                     "description": "Current task",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="update_session_progress",
+        description="Update session progress (phase, task, blockers). Uses current project if project is not specified.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "current_phase": {
+                    "type": "string",
+                    "description": "Current phase",
+                },
+                "current_task": {
+                    "type": "string",
+                    "description": "Current task",
+                },
+                "completed_task": {
+                    "type": "string",
+                    "description": "Just completed task",
+                },
+                "blockers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of blockers",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
                 },
             },
         },
@@ -1285,7 +1323,7 @@ class PrismindServer:
 
         # Check if required tools are initialized
         google_required_tools = [
-            "start_session", "end_session", "save_session", "update_summary",
+            "start_session", "end_session", "save_session", "update_session_progress", "update_summary",
             "setup_project", "switch_project", "list_projects",
             "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
@@ -1320,6 +1358,8 @@ class PrismindServer:
                     for d in result.recommended_docs
                 ],
                 "notes": result.notes,
+                "last_summary": result.last_summary,
+                "next_action": result.next_action,
             }
         
         elif name == "end_session":
@@ -1328,6 +1368,7 @@ class PrismindServer:
                 next_action=args.get("next_action"),
                 blockers=args.get("blockers"),
                 notes=args.get("notes"),
+                project=args.get("project"),
             )
             return {
                 "success": result.success,
@@ -1335,7 +1376,7 @@ class PrismindServer:
                 "saved_to": result.saved_to,
                 "message": result.message,
             }
-        
+
         elif name == "save_session":
             result = self._session_tools.save_session(
                 summary=args.get("summary"),
@@ -1344,6 +1385,21 @@ class PrismindServer:
                 notes=args.get("notes"),
                 current_phase=args.get("current_phase"),
                 current_task=args.get("current_task"),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "saved_to": result.saved_to,
+                "message": result.message,
+            }
+
+        elif name == "update_session_progress":
+            result = self._session_tools.update_progress(
+                current_phase=args.get("current_phase"),
+                current_task=args.get("current_task"),
+                completed_task=args.get("completed_task"),
+                blockers=args.get("blockers"),
+                project=args.get("project"),
             )
             return {
                 "success": result.success,

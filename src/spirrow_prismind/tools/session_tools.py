@@ -145,12 +145,16 @@ class SessionTools:
             last_completed = session_state.last_completed
             blockers = session_state.blockers
             notes = session_state.notes
+            last_summary = session_state.last_summary
+            next_action = session_state.next_action
         else:
             current_phase = ""
             current_task = ""
             last_completed = ""
             blockers = []
             notes = "新しいセッションです。"
+            last_summary = ""
+            next_action = ""
         
         # Get recommended documents
         recommended_docs = self._get_recommended_docs(
@@ -170,6 +174,8 @@ class SessionTools:
             blockers=blockers,
             recommended_docs=recommended_docs,
             notes=notes,
+            last_summary=last_summary,
+            next_action=next_action,
         )
 
     def end_session(
@@ -178,22 +184,25 @@ class SessionTools:
         next_action: Optional[str] = None,
         blockers: Optional[list[str]] = None,
         notes: Optional[str] = None,
+        project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> EndSessionResult:
         """End the session and save state.
-        
+
         Args:
             summary: Work summary for this session
             next_action: What to do next
             blockers: Updated blockers list
             notes: Notes for next session
+            project: Project ID (uses current if None)
             user: User ID (uses default if None)
-            
+
         Returns:
             EndSessionResult
         """
         user = user or self._current_user or self.user_name
-        project = self._get_current_project(user)
+        if project is None or project == "":
+            project = self._get_current_project(user)
 
         if not project:
             return EndSessionResult(
@@ -259,10 +268,11 @@ class SessionTools:
         notes: Optional[str] = None,
         current_phase: Optional[str] = None,
         current_task: Optional[str] = None,
+        project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> SaveSessionResult:
         """Save session state without ending.
-        
+
         Args:
             summary: Work summary
             next_action: What to do next
@@ -270,13 +280,15 @@ class SessionTools:
             notes: Notes
             current_phase: Update current phase
             current_task: Update current task
+            project: Project ID (uses current if None)
             user: User ID (uses default if None)
 
         Returns:
             SaveSessionResult
         """
         user = user or self._current_user or self.user_name
-        project = self._get_current_project(user)
+        if project is None or project == "":
+            project = self._get_current_project(user)
 
         if not project:
             return SaveSessionResult(
@@ -326,22 +338,25 @@ class SessionTools:
         current_task: Optional[str] = None,
         completed_task: Optional[str] = None,
         blockers: Optional[list[str]] = None,
+        project: Optional[str] = None,
         user: Optional[str] = None,
     ) -> SaveSessionResult:
         """Update progress in the session.
-        
+
         Args:
             current_phase: New current phase
             current_task: New current task
             completed_task: Task that was just completed
             blockers: Updated blockers
+            project: Project ID (uses current if None)
             user: User ID
 
         Returns:
             SaveSessionResult
         """
         user = user or self._current_user or self.user_name
-        project = self._get_current_project(user)
+        if project is None or project == "":
+            project = self._get_current_project(user)
 
         if not project:
             return SaveSessionResult(

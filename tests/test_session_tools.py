@@ -139,6 +139,69 @@ class TestEndSession:
         assert result.success is False
         assert "アクティブなセッションがありません" in result.message
 
+    def test_end_session_with_explicit_project(self, session_tools, project_tools, mock_memory_client):
+        """Test ending session with explicit project parameter."""
+        # Setup two projects
+        project_tools.setup_project(
+            project="proj_a",
+            name="Project A",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        project_tools.setup_project(
+            project="proj_b",
+            name="Project B",
+            spreadsheet_id="sheet2",
+            root_folder_id="folder2",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Start session on proj_a
+        session_tools.start_session(project="proj_a")
+
+        # End session with explicit project=proj_b (different from current)
+        result = session_tools.end_session(
+            summary="Work on proj_b",
+            next_action="Continue proj_b",
+            project="proj_b",
+        )
+
+        assert result.success is True
+
+        # Verify state was saved to proj_b
+        state = mock_memory_client.get_session_state("proj_b", "test_user")
+        assert state is not None
+        assert state.last_summary == "Work on proj_b"
+
+    def test_end_session_uses_current_when_project_none(self, session_tools, project_tools, mock_memory_client):
+        """Test end_session uses current project when project is None."""
+        # Setup and start session
+        project_tools.setup_project(
+            project="current_proj",
+            name="Current Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        session_tools.start_session(project="current_proj")
+
+        # End session without project parameter
+        result = session_tools.end_session(
+            summary="Work done",
+            project=None,  # Explicitly None
+        )
+
+        assert result.success is True
+
+        # Verify state was saved to current project
+        state = mock_memory_client.get_session_state("current_proj", "test_user")
+        assert state is not None
+        assert state.last_summary == "Work done"
+
 
 class TestSaveSession:
     """Tests for save_session method."""
@@ -179,6 +242,71 @@ class TestSaveSession:
 
         assert result.success is False
         assert "アクティブなプロジェクトがありません" in result.message
+
+    def test_save_session_with_explicit_project(self, session_tools, project_tools, mock_memory_client):
+        """Test saving session with explicit project parameter."""
+        # Setup two projects
+        project_tools.setup_project(
+            project="save_proj_a",
+            name="Save Project A",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        project_tools.setup_project(
+            project="save_proj_b",
+            name="Save Project B",
+            spreadsheet_id="sheet2",
+            root_folder_id="folder2",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Start session on save_proj_a
+        session_tools.start_session(project="save_proj_a")
+
+        # Save session with explicit project=save_proj_b
+        result = session_tools.save_session(
+            summary="Work on proj_b",
+            current_phase="Phase 2",
+            project="save_proj_b",
+        )
+
+        assert result.success is True
+
+        # Verify state was saved to save_proj_b
+        state = mock_memory_client.get_session_state("save_proj_b", "test_user")
+        assert state is not None
+        assert state.last_summary == "Work on proj_b"
+        assert state.current_phase == "Phase 2"
+
+    def test_save_session_uses_current_when_project_omitted(self, session_tools, project_tools, mock_memory_client):
+        """Test save_session uses current project when project is omitted."""
+        # Setup and start session
+        project_tools.setup_project(
+            project="save_current_proj",
+            name="Save Current Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        session_tools.start_session(project="save_current_proj")
+
+        # Save session without project parameter
+        result = session_tools.save_session(
+            summary="Work in progress",
+            current_phase="Phase 4",
+        )
+
+        assert result.success is True
+
+        # Verify state was saved to current project
+        state = mock_memory_client.get_session_state("save_current_proj", "test_user")
+        assert state is not None
+        assert state.last_summary == "Work in progress"
+        assert state.current_phase == "Phase 4"
 
 
 class TestUpdateProgress:
@@ -236,6 +364,73 @@ class TestUpdateProgress:
         state = mock_memory_client.get_session_state("blocker_proj", "test_user")
         assert len(state.blockers) == 2
         assert "Blocker 1" in state.blockers
+
+    def test_update_progress_with_explicit_project(self, session_tools, project_tools, mock_memory_client):
+        """Test updating progress with explicit project parameter."""
+        # Setup two projects
+        project_tools.setup_project(
+            project="progress_proj_a",
+            name="Progress Project A",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        project_tools.setup_project(
+            project="progress_proj_b",
+            name="Progress Project B",
+            spreadsheet_id="sheet2",
+            root_folder_id="folder2",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Start session on progress_proj_a
+        session_tools.start_session(project="progress_proj_a")
+
+        # Update progress with explicit project=progress_proj_b
+        result = session_tools.update_progress(
+            current_phase="Phase 5",
+            current_task="T15",
+            completed_task="T14",
+            project="progress_proj_b",
+        )
+
+        assert result.success is True
+
+        # Verify state was saved to progress_proj_b
+        state = mock_memory_client.get_session_state("progress_proj_b", "test_user")
+        assert state is not None
+        assert state.current_phase == "Phase 5"
+        assert state.current_task == "T15"
+        assert state.last_completed == "T14"
+
+    def test_update_progress_uses_current_when_project_omitted(self, session_tools, project_tools, mock_memory_client):
+        """Test update_progress uses current project when project is omitted."""
+        # Setup and start session
+        project_tools.setup_project(
+            project="progress_current_proj",
+            name="Progress Current Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        session_tools.start_session(project="progress_current_proj")
+
+        # Update progress without project parameter
+        result = session_tools.update_progress(
+            current_phase="Phase 6",
+            current_task="T20",
+        )
+
+        assert result.success is True
+
+        # Verify state was saved to current project
+        state = mock_memory_client.get_session_state("progress_current_proj", "test_user")
+        assert state is not None
+        assert state.current_phase == "Phase 6"
+        assert state.current_task == "T20"
 
 
 class TestSessionDuration:
@@ -303,3 +498,100 @@ class TestIsSessionActive:
         session_tools.end_session()
 
         assert session_tools.is_session_active is False
+
+
+class TestHandoffRestore:
+    """Tests for handoff information restoration (last_summary, next_action)."""
+
+    def test_handoff_info_restored_on_start_session(self, session_tools, project_tools, mock_memory_client):
+        """Test that last_summary and next_action are restored when starting a new session."""
+        from spirrow_prismind.integrations.memory_client import SessionState
+
+        # Setup project
+        project_tools.setup_project(
+            project="handoff_proj",
+            name="Handoff Test",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Simulate previous session's end_session by saving state with handoff info
+        state = SessionState(
+            project="handoff_proj",
+            user="test_user",
+            current_phase="Phase 3",
+            current_task="T07: Review",
+            last_completed="T06",
+            blockers=["Waiting for approval"],
+            notes="Remember to check edge cases",
+            last_summary="Completed API implementation and unit tests",
+            next_action="Start integration testing with frontend",
+        )
+        mock_memory_client.save_session_state(state)
+
+        # Start new session - should restore handoff info
+        context = session_tools.start_session(project="handoff_proj")
+
+        assert context.last_summary == "Completed API implementation and unit tests"
+        assert context.next_action == "Start integration testing with frontend"
+        assert context.notes == "Remember to check edge cases"
+        assert context.current_phase == "Phase 3"
+
+    def test_end_session_saves_handoff_info(self, session_tools, project_tools, mock_memory_client):
+        """Test that end_session correctly saves last_summary and next_action."""
+        # Setup and start session
+        project_tools.setup_project(
+            project="end_handoff_proj",
+            name="End Handoff Test",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        session_tools.start_session(project="end_handoff_proj")
+
+        # End session with handoff info
+        result = session_tools.end_session(
+            summary="Finished implementing feature X",
+            next_action="Deploy to staging and test",
+            blockers=["Need staging credentials"],
+            notes="Config changes needed for production",
+        )
+
+        assert result.success is True
+
+        # Verify state was saved with handoff info
+        state = mock_memory_client.get_session_state("end_handoff_proj", "test_user")
+        assert state is not None
+        assert state.last_summary == "Finished implementing feature X"
+        assert state.next_action == "Deploy to staging and test"
+        assert state.notes == "Config changes needed for production"
+
+    def test_full_handoff_cycle(self, session_tools, project_tools, mock_memory_client):
+        """Test complete handoff cycle: start -> end -> start (new session)."""
+        # Setup project
+        project_tools.setup_project(
+            project="cycle_proj",
+            name="Cycle Test",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Session 1: Start and end with handoff info
+        session_tools.start_session(project="cycle_proj")
+        session_tools.end_session(
+            summary="Session 1 completed task A",
+            next_action="Continue with task B",
+            notes="Important: check the logs",
+        )
+
+        # Session 2: Start and verify handoff info is restored
+        context = session_tools.start_session(project="cycle_proj")
+
+        assert context.last_summary == "Session 1 completed task A"
+        assert context.next_action == "Continue with task B"
+        assert context.notes == "Important: check the logs"

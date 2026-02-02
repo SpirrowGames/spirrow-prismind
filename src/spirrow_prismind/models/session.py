@@ -29,6 +29,10 @@ class SessionContext:
     # Notes from last session
     notes: str = ""
 
+    # Handoff information from previous session
+    last_summary: str = ""
+    next_action: str = ""
+
 
 @dataclass
 class SessionState:
