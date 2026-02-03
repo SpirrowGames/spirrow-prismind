@@ -222,6 +222,41 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="list_sessions",
+        description="List all saved sessions. Can filter by project or user.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Filter by project ID (omit for all projects)",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "Filter by user ID (uses current user if omitted)",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="delete_session",
+        description="Delete a saved session state for a project.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project ID of the session to delete",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "User ID (uses current user if omitted)",
+                },
+            },
+            "required": ["project"],
+        },
+    ),
     # Project Management
     Tool(
         name="setup_project",
@@ -1323,7 +1358,8 @@ class PrismindServer:
 
         # Check if required tools are initialized
         google_required_tools = [
-            "start_session", "end_session", "save_session", "update_session_progress", "update_summary",
+            "start_session", "end_session", "save_session", "update_session_progress",
+            "list_sessions", "delete_session", "update_summary",
             "setup_project", "switch_project", "list_projects",
             "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
@@ -1406,7 +1442,44 @@ class PrismindServer:
                 "saved_to": result.saved_to,
                 "message": result.message,
             }
-        
+
+        elif name == "list_sessions":
+            result = self._session_tools.list_sessions(
+                project=args.get("project"),
+                user=args.get("user"),
+            )
+            return {
+                "success": result.success,
+                "sessions": [
+                    {
+                        "project": s.project,
+                        "user": s.user,
+                        "current_phase": s.current_phase,
+                        "current_task": s.current_task,
+                        "last_completed": s.last_completed,
+                        "blockers": s.blockers,
+                        "last_summary": s.last_summary,
+                        "next_action": s.next_action,
+                        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                    }
+                    for s in result.sessions
+                ],
+                "total_count": result.total_count,
+                "message": result.message,
+            }
+
+        elif name == "delete_session":
+            result = self._session_tools.delete_session(
+                project=args["project"],
+                user=args.get("user"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "user": result.user,
+                "message": result.message,
+            }
+
         # Project Management
         elif name == "setup_project":
             result = self._project_tools.setup_project(

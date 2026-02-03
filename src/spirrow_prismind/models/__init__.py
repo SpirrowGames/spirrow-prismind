@@ -47,9 +47,12 @@ from .project import (
     UpdateProjectResult,
 )
 from .session import (
+    DeleteSessionResult,
     EndSessionResult,
+    ListSessionsResult,
     SaveSessionResult,
     SessionContext,
+    SessionInfo,
     SessionState,
 )
 from .setup import (

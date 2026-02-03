@@ -104,3 +104,38 @@ class SaveSessionResult:
     success: bool
     saved_to: list[str] = field(default_factory=list)
     message: str = ""
+
+
+@dataclass
+class SessionInfo:
+    """Summary information about a session."""
+
+    project: str
+    user: str
+    current_phase: str = ""
+    current_task: str = ""
+    last_completed: str = ""
+    blockers: list[str] = field(default_factory=list)
+    last_summary: str = ""
+    next_action: str = ""
+    updated_at: Optional[datetime] = None
+
+
+@dataclass
+class ListSessionsResult:
+    """Result of listing sessions."""
+
+    success: bool
+    sessions: list[SessionInfo] = field(default_factory=list)
+    total_count: int = 0
+    message: str = ""
+
+
+@dataclass
+class DeleteSessionResult:
+    """Result of deleting a session."""
+
+    success: bool
+    project: str = ""
+    user: str = ""
+    message: str = ""

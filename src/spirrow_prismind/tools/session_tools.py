@@ -12,10 +12,13 @@ from ..integrations import (
     SessionState,
 )
 from ..models import (
+    DeleteSessionResult,
     DocReference,
     EndSessionResult,
+    ListSessionsResult,
     SaveSessionResult,
     SessionContext,
+    SessionInfo,
     UpdateSummaryResult,
 )
 from .project_tools import ProjectTools
@@ -644,3 +647,135 @@ class SessionTools:
         if self._session_start:
             return datetime.now() - self._session_start
         return None
+
+    def list_sessions(
+        self,
+        project: Optional[str] = None,
+        user: Optional[str] = None,
+    ) -> ListSessionsResult:
+        """List all saved sessions.
+
+        Args:
+            project: Filter by project (None for all projects)
+            user: Filter by user (None for current user)
+
+        Returns:
+            ListSessionsResult with list of sessions
+        """
+        user = user or self.user_name
+
+        try:
+            if project:
+                # Get sessions for specific project
+                states = self.memory.get_all_sessions_for_project(project)
+                # Filter by user if specified
+                if user:
+                    states = [s for s in states if s.user == user]
+            else:
+                # Get all sessions for user
+                states = self.memory.get_all_sessions_for_user(user)
+
+            sessions = []
+            for state in states:
+                # Parse updated_at
+                updated_at = None
+                if state.updated_at:
+                    if isinstance(state.updated_at, str):
+                        try:
+                            updated_at = datetime.fromisoformat(state.updated_at)
+                        except ValueError:
+                            pass
+                    elif isinstance(state.updated_at, datetime):
+                        updated_at = state.updated_at
+
+                sessions.append(SessionInfo(
+                    project=state.project,
+                    user=state.user,
+                    current_phase=state.current_phase,
+                    current_task=state.current_task,
+                    last_completed=state.last_completed,
+                    blockers=state.blockers,
+                    last_summary=state.last_summary,
+                    next_action=state.next_action,
+                    updated_at=updated_at,
+                ))
+
+            # Sort by updated_at descending (most recent first)
+            sessions.sort(
+                key=lambda s: s.updated_at or datetime.min,
+                reverse=True,
+            )
+
+            return ListSessionsResult(
+                success=True,
+                sessions=sessions,
+                total_count=len(sessions),
+                message=f"{len(sessions)}件のセッションが見つかりました。",
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to list sessions: {e}")
+            return ListSessionsResult(
+                success=False,
+                message=f"セッション一覧の取得に失敗しました: {e}",
+            )
+
+    def delete_session(
+        self,
+        project: str,
+        user: Optional[str] = None,
+    ) -> DeleteSessionResult:
+        """Delete a saved session.
+
+        Args:
+            project: Project ID of the session to delete
+            user: User ID (uses default if None)
+
+        Returns:
+            DeleteSessionResult
+        """
+        user = user or self.user_name
+
+        if not project:
+            return DeleteSessionResult(
+                success=False,
+                message="プロジェクトIDが指定されていません。",
+            )
+
+        try:
+            # Check if session exists
+            existing = self.memory.get_session_state(project, user)
+            if not existing:
+                return DeleteSessionResult(
+                    success=False,
+                    project=project,
+                    user=user,
+                    message=f"セッションが見つかりません: project={project}, user={user}",
+                )
+
+            # Delete the session
+            result = self.memory.delete_session_state(project, user)
+
+            if result.success:
+                return DeleteSessionResult(
+                    success=True,
+                    project=project,
+                    user=user,
+                    message=f"セッションを削除しました: project={project}, user={user}",
+                )
+            else:
+                return DeleteSessionResult(
+                    success=False,
+                    project=project,
+                    user=user,
+                    message=f"セッションの削除に失敗しました: {result.message}",
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to delete session: {e}")
+            return DeleteSessionResult(
+                success=False,
+                project=project,
+                user=user,
+                message=f"セッションの削除に失敗しました: {e}",
+            )

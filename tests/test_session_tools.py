@@ -595,3 +595,140 @@ class TestHandoffRestore:
         assert context.last_summary == "Session 1 completed task A"
         assert context.next_action == "Continue with task B"
         assert context.notes == "Important: check the logs"
+
+
+class TestListSessions:
+    """Tests for list_sessions method."""
+
+    def test_list_sessions_empty(self, session_tools):
+        """Test listing sessions when none exist."""
+        result = session_tools.list_sessions()
+
+        assert result.success is True
+        assert result.total_count == 0
+        assert len(result.sessions) == 0
+
+    def test_list_sessions_returns_all_for_user(self, session_tools, project_tools, mock_memory_client):
+        """Test listing all sessions for a user."""
+        # Setup multiple projects and sessions
+        for proj in ["list_proj_a", "list_proj_b", "list_proj_c"]:
+            project_tools.setup_project(
+                project=proj,
+                name=f"List Test {proj}",
+                spreadsheet_id="sheet1",
+                root_folder_id="folder1",
+                create_sheets=False,
+                create_folders=False,
+            )
+            session_tools.start_session(project=proj)
+            session_tools.end_session(summary=f"Summary for {proj}")
+
+        # List all sessions
+        result = session_tools.list_sessions()
+
+        assert result.success is True
+        assert result.total_count == 3
+        assert len(result.sessions) == 3
+
+        # Check all projects are present
+        projects = {s.project for s in result.sessions}
+        assert "list_proj_a" in projects
+        assert "list_proj_b" in projects
+        assert "list_proj_c" in projects
+
+    def test_list_sessions_filter_by_project(self, session_tools, project_tools, mock_memory_client):
+        """Test listing sessions filtered by project."""
+        # Setup two projects
+        for proj in ["filter_proj_a", "filter_proj_b"]:
+            project_tools.setup_project(
+                project=proj,
+                name=f"Filter Test {proj}",
+                spreadsheet_id="sheet1",
+                root_folder_id="folder1",
+                create_sheets=False,
+                create_folders=False,
+            )
+            session_tools.start_session(project=proj)
+            session_tools.end_session(summary=f"Summary for {proj}")
+
+        # List sessions for specific project
+        result = session_tools.list_sessions(project="filter_proj_a")
+
+        assert result.success is True
+        assert result.total_count == 1
+        assert result.sessions[0].project == "filter_proj_a"
+
+
+class TestDeleteSession:
+    """Tests for delete_session method."""
+
+    def test_delete_session_success(self, session_tools, project_tools, mock_memory_client):
+        """Test deleting an existing session."""
+        # Setup and create a session
+        project_tools.setup_project(
+            project="delete_proj",
+            name="Delete Test",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        session_tools.start_session(project="delete_proj")
+        session_tools.end_session(summary="Session to delete")
+
+        # Verify session exists
+        state = mock_memory_client.get_session_state("delete_proj", "test_user")
+        assert state is not None
+
+        # Delete the session
+        result = session_tools.delete_session(project="delete_proj")
+
+        assert result.success is True
+        assert result.project == "delete_proj"
+        assert "削除しました" in result.message
+
+        # Verify session is deleted
+        state = mock_memory_client.get_session_state("delete_proj", "test_user")
+        assert state is None
+
+    def test_delete_session_not_found(self, session_tools):
+        """Test deleting a non-existent session."""
+        result = session_tools.delete_session(project="nonexistent_proj")
+
+        assert result.success is False
+        assert "見つかりません" in result.message
+
+    def test_delete_session_no_project(self, session_tools):
+        """Test deleting without project ID."""
+        result = session_tools.delete_session(project="")
+
+        assert result.success is False
+        assert "指定されていません" in result.message
+
+    def test_delete_session_cleans_up_for_list(self, session_tools, project_tools, mock_memory_client):
+        """Test that deleted session is no longer listed."""
+        # Setup multiple sessions
+        for proj in ["cleanup_a", "cleanup_b"]:
+            project_tools.setup_project(
+                project=proj,
+                name=f"Cleanup Test {proj}",
+                spreadsheet_id="sheet1",
+                root_folder_id="folder1",
+                create_sheets=False,
+                create_folders=False,
+            )
+            session_tools.start_session(project=proj)
+            session_tools.end_session(summary=f"Summary for {proj}")
+
+        # Verify both sessions exist
+        list_result = session_tools.list_sessions()
+        assert list_result.total_count == 2
+
+        # Delete one session
+        delete_result = session_tools.delete_session(project="cleanup_a")
+        assert delete_result.success is True
+
+        # Verify only one session remains
+        list_result = session_tools.list_sessions()
+        assert list_result.total_count == 1
+        assert list_result.sessions[0].project == "cleanup_b"
