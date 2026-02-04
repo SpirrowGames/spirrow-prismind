@@ -62,6 +62,43 @@ class UpdateProgressResult:
     message: str = ""
 
 
+@dataclass
+class GetTaskResult:
+    """Result of getting a single task."""
+
+    success: bool
+    task: Optional[TaskProgress] = None
+    phase: str = ""
+    project: str = ""
+    message: str = ""
+
+
+@dataclass
+class DeleteTaskResult:
+    """Result of deleting a task."""
+
+    success: bool
+    task_id: str = ""
+    phase: str = ""
+    project: str = ""
+    dependent_tasks_updated: list[str] = field(default_factory=list)
+    message: str = ""
+
+
+@dataclass
+class UpdateTaskResult:
+    """Result of updating a task (extended)."""
+
+    success: bool
+    task_id: str = ""
+    project: str = ""
+    updated_fields: list[str] = field(default_factory=list)
+    phase_moved: bool = False
+    old_phase: str = ""
+    new_phase: str = ""
+    message: str = ""
+
+
 # Column headers for the progress sheet
 PROGRESS_SHEET_HEADERS = [
     "フェーズ",      # A

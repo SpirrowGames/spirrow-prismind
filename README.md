@@ -130,6 +130,19 @@ Add to your Claude Code settings:
 | `update_knowledge` | Update an existing knowledge entry |
 | `delete_knowledge` | Delete a knowledge entry |
 
+### Progress Management
+| Tool | Description |
+|------|-------------|
+| `get_progress` | Get project progress with phases and tasks |
+| `add_task` | Add a new task to progress sheet |
+| `get_task` | Get single task details by ID |
+| `update_task` | Update task (name, description, status, priority, phase move) |
+| `delete_task` | Delete task with blocked_by reference cleanup |
+| `update_task_status` | Update task status |
+| `start_task` | Mark task as in_progress |
+| `complete_task` | Mark task as completed |
+| `block_task` | Mark task as blocked |
+
 ## Architecture
 
 ```

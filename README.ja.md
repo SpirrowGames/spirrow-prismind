@@ -130,6 +130,19 @@ Claude Codeの設定に追加:
 | `update_knowledge` | 既存知見の更新 |
 | `delete_knowledge` | 知見の削除 |
 
+### 進捗管理
+| ツール | 説明 |
+|--------|------|
+| `get_progress` | プロジェクト進捗（フェーズ・タスク）取得 |
+| `add_task` | 新規タスク追加 |
+| `get_task` | 単一タスク詳細取得 |
+| `update_task` | タスク更新（名前・説明・ステータス・優先度・フェーズ移動） |
+| `delete_task` | タスク削除（blocked_by参照の自動クリーンアップ） |
+| `update_task_status` | タスクステータス更新 |
+| `start_task` | タスクを進行中に設定 |
+| `complete_task` | タスクを完了に設定 |
+| `block_task` | タスクをブロック状態に設定 |
+
 ## アーキテクチャ
 
 ```

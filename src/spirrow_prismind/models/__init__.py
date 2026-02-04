@@ -23,12 +23,15 @@ from .knowledge import (
     UpdateKnowledgeResult,
 )
 from .progress import (
+    DeleteTaskResult,
     GetProgressResult,
+    GetTaskResult,
     PhaseProgress,
     PROGRESS_SHEET_HEADERS,
     TaskDefinition,
     TaskProgress,
     UpdateProgressResult,
+    UpdateTaskResult,
     task_from_sheet_row,
     task_to_sheet_row,
 )
@@ -102,12 +105,15 @@ __all__ = [
     "SearchKnowledgeResult",
     "UpdateKnowledgeResult",
     # Progress
+    "DeleteTaskResult",
     "GetProgressResult",
+    "GetTaskResult",
     "PhaseProgress",
     "PROGRESS_SHEET_HEADERS",
     "TaskDefinition",
     "TaskProgress",
     "UpdateProgressResult",
+    "UpdateTaskResult",
     "task_from_sheet_row",
     "task_to_sheet_row",
     # Project

@@ -1006,6 +1006,106 @@ TOOLS = [
             "required": ["task_id", "blockers"],
         },
     ),
+    Tool(
+        name="get_task",
+        description="Get a single task by ID.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (e.g., T01)",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "Phase name (required when task_id exists in multiple phases)",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID",
+                },
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="delete_task",
+        description="Delete a task from the progress sheet. Also cleans up blocked_by references in other tasks.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (e.g., T01)",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "Phase name (required when task_id exists in multiple phases)",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID",
+                },
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="update_task",
+        description="Update a task with any combination of fields. Supports updating name, description, status, priority, category, blocked_by, blockers, and moving to a new phase.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (e.g., T01)",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "Current phase name (required when task_id exists in multiple phases)",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "New task name",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description (stored in notes column)",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "New status (not_started/in_progress/completed/blocked)",
+                },
+                "priority": {
+                    "type": "string",
+                    "description": "New priority (high/medium/low)",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "New category",
+                },
+                "blocked_by": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "New blocked_by task IDs",
+                },
+                "blockers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "New blockers list",
+                },
+                "new_phase": {
+                    "type": "string",
+                    "description": "Target phase for moving the task",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID",
+                },
+            },
+            "required": ["task_id"],
+        },
+    ),
     # Summary Operations
     Tool(
         name="update_summary",
@@ -1461,6 +1561,7 @@ class PrismindServer:
             "find_similar_document_type",
             "search_catalog", "sync_catalog",
             "get_progress", "update_task_status", "add_task",
+            "get_task", "delete_task", "update_task",
         ]
 
         if name in google_required_tools and not self._project_tools:
@@ -2091,6 +2192,79 @@ class PrismindServer:
                 "project": result.project,
                 "task_id": result.task_id,
                 "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        elif name == "get_task":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.get_task(
+                task_id=args["task_id"],
+                phase=args.get("phase"),
+                project=args.get("project"),
+            )
+            task_dict = None
+            if result.task:
+                task_dict = {
+                    "task_id": result.task.task_id,
+                    "name": result.task.name,
+                    "status": result.task.status,
+                    "blockers": result.task.blockers,
+                    "completed_at": result.task.completed_at.isoformat() if result.task.completed_at else None,
+                    "notes": result.task.notes,
+                    "priority": result.task.priority,
+                    "category": result.task.category,
+                    "blocked_by": result.task.blocked_by,
+                }
+            return {
+                "success": result.success,
+                "task": task_dict,
+                "phase": result.phase,
+                "project": result.project,
+                "message": result.message,
+            }
+
+        elif name == "delete_task":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.delete_task(
+                task_id=args["task_id"],
+                phase=args.get("phase"),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "task_id": result.task_id,
+                "phase": result.phase,
+                "project": result.project,
+                "dependent_tasks_updated": result.dependent_tasks_updated,
+                "message": result.message,
+            }
+
+        elif name == "update_task":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.update_task(
+                task_id=args["task_id"],
+                phase=args.get("phase"),
+                name=args.get("name"),
+                description=args.get("description"),
+                status=args.get("status"),
+                priority=args.get("priority"),
+                category=args.get("category"),
+                blocked_by=args.get("blocked_by"),
+                blockers=args.get("blockers"),
+                new_phase=args.get("new_phase"),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "task_id": result.task_id,
+                "project": result.project,
+                "updated_fields": result.updated_fields,
+                "phase_moved": result.phase_moved,
+                "old_phase": result.old_phase,
+                "new_phase": result.new_phase,
                 "message": result.message,
             }
 

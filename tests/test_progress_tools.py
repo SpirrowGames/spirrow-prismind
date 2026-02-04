@@ -530,3 +530,419 @@ class TestConvenienceMethods:
 
         assert result.success is True
         assert "blockers" in result.updated_fields
+
+
+class TestGetTask:
+    """Tests for get_task method."""
+
+    def test_get_task_no_project(self, progress_tools):
+        """Test get_task fails without project."""
+        result = progress_tools.get_task(task_id="T01")
+
+        assert result.success is False
+        assert "プロジェクトが選択されていません" in result.message
+
+    def test_get_task_not_found(self, progress_tools, mock_sheets_client, project_tools):
+        """Test get_task fails when task not found."""
+        project_tools.setup_project(
+            project="get_notfound",
+            name="Get Not Found",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task 1", "not_started"],
+            ]
+        }
+
+        result = progress_tools.get_task(task_id="T99", project="get_notfound")
+
+        assert result.success is False
+        assert "見つかりません" in result.message
+
+    def test_get_task_success(self, progress_tools, mock_sheets_client, project_tools):
+        """Test successful task retrieval."""
+        project_tools.setup_project(
+            project="get_success",
+            name="Get Success",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考", "優先度", "カテゴリ", "依存タスク"],
+                ["Phase 1", "T01", "Task 1", "in_progress", "", "", "Notes", "high", "bug", "T00"],
+            ]
+        }
+
+        result = progress_tools.get_task(task_id="T01", project="get_success")
+
+        assert result.success is True
+        assert result.task is not None
+        assert result.task.task_id == "T01"
+        assert result.task.name == "Task 1"
+        assert result.task.priority == "high"
+        assert result.task.category == "bug"
+        assert result.task.blocked_by == ["T00"]
+        assert result.phase == "Phase 1"
+
+    def test_get_task_ambiguous(self, progress_tools, mock_sheets_client, project_tools):
+        """Test get_task fails when task exists in multiple phases without specifying phase."""
+        project_tools.setup_project(
+            project="get_ambig",
+            name="Get Ambiguous",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task 1", "completed"],
+                ["Phase 2", "T01", "Task 1 v2", "not_started"],
+            ]
+        }
+
+        result = progress_tools.get_task(task_id="T01", project="get_ambig")
+
+        assert result.success is False
+        assert "複数のフェーズに存在" in result.message
+
+    def test_get_task_with_phase(self, progress_tools, mock_sheets_client, project_tools):
+        """Test get_task succeeds with phase specified for ambiguous task."""
+        project_tools.setup_project(
+            project="get_phase",
+            name="Get Phase",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task 1", "completed"],
+                ["Phase 2", "T01", "Task 1 v2", "not_started"],
+            ]
+        }
+
+        result = progress_tools.get_task(task_id="T01", phase="Phase 2", project="get_phase")
+
+        assert result.success is True
+        assert result.task.name == "Task 1 v2"
+        assert result.phase == "Phase 2"
+
+
+class TestDeleteTask:
+    """Tests for delete_task method."""
+
+    def test_delete_task_no_project(self, progress_tools):
+        """Test delete_task fails without project."""
+        result = progress_tools.delete_task(task_id="T01")
+
+        assert result.success is False
+        assert "プロジェクトが選択されていません" in result.message
+
+    def test_delete_task_not_found(self, progress_tools, mock_sheets_client, project_tools):
+        """Test delete_task fails when task not found."""
+        project_tools.setup_project(
+            project="del_notfound",
+            name="Delete Not Found",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task 1", "not_started"],
+            ]
+        }
+
+        result = progress_tools.delete_task(task_id="T99", project="del_notfound")
+
+        assert result.success is False
+        assert "見つかりません" in result.message
+
+    def test_delete_task_success(self, progress_tools, mock_sheets_client, project_tools):
+        """Test successful task deletion."""
+        project_tools.setup_project(
+            project="del_success",
+            name="Delete Success",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考", "優先度", "カテゴリ", "依存タスク"],
+                ["Phase 1", "T01", "Task 1", "completed", "", "", "", "", "", ""],
+            ]
+        }
+
+        result = progress_tools.delete_task(task_id="T01", project="del_success")
+
+        assert result.success is True
+        assert result.task_id == "T01"
+        assert result.phase == "Phase 1"
+        assert "削除しました" in result.message
+        mock_sheets_client.update_range.assert_called()
+
+    def test_delete_task_cleans_blocked_by(self, progress_tools, mock_sheets_client, project_tools):
+        """Test delete_task cleans up blocked_by references."""
+        project_tools.setup_project(
+            project="del_deps",
+            name="Delete Deps",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考", "優先度", "カテゴリ", "依存タスク"],
+                ["Phase 1", "T01", "Task 1", "completed", "", "", "", "", "", ""],
+                ["Phase 1", "T02", "Task 2", "not_started", "", "", "", "", "", "T01"],
+                ["Phase 1", "T03", "Task 3", "not_started", "", "", "", "", "", "T01,T02"],
+            ]
+        }
+
+        result = progress_tools.delete_task(task_id="T01", project="del_deps")
+
+        assert result.success is True
+        assert "T02" in result.dependent_tasks_updated
+        assert "T03" in result.dependent_tasks_updated
+
+    def test_delete_task_ambiguous(self, progress_tools, mock_sheets_client, project_tools):
+        """Test delete_task fails when task exists in multiple phases."""
+        project_tools.setup_project(
+            project="del_ambig",
+            name="Delete Ambiguous",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task 1", "completed"],
+                ["Phase 2", "T01", "Task 1 v2", "not_started"],
+            ]
+        }
+
+        result = progress_tools.delete_task(task_id="T01", project="del_ambig")
+
+        assert result.success is False
+        assert "複数のフェーズに存在" in result.message
+
+
+class TestUpdateTask:
+    """Tests for update_task method."""
+
+    def test_update_task_no_project(self, progress_tools):
+        """Test update_task fails without project."""
+        result = progress_tools.update_task(task_id="T01")
+
+        assert result.success is False
+        assert "プロジェクトが選択されていません" in result.message
+
+    def test_update_task_not_found(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task fails when task not found."""
+        project_tools.setup_project(
+            project="updt_notfound",
+            name="Update Task Not Found",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task 1", "not_started"],
+            ]
+        }
+
+        result = progress_tools.update_task(task_id="T99", project="updt_notfound")
+
+        assert result.success is False
+        assert "見つかりません" in result.message
+
+    def test_update_task_invalid_status(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task fails with invalid status."""
+        project_tools.setup_project(
+            project="updt_inv_stat",
+            name="Update Invalid Status",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        result = progress_tools.update_task(
+            task_id="T01",
+            status="invalid_status",
+            project="updt_inv_stat",
+        )
+
+        assert result.success is False
+        assert "無効なステータス" in result.message
+
+    def test_update_task_invalid_priority(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task fails with invalid priority."""
+        project_tools.setup_project(
+            project="updt_inv_pri",
+            name="Update Invalid Priority",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        result = progress_tools.update_task(
+            task_id="T01",
+            priority="invalid_priority",
+            project="updt_inv_pri",
+        )
+
+        assert result.success is False
+        assert "無効な優先度" in result.message
+
+    def test_update_task_name(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task can update name."""
+        project_tools.setup_project(
+            project="updt_name",
+            name="Update Task Name",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考", "優先度", "カテゴリ", "依存タスク"],
+                ["Phase 1", "T01", "Old Name", "not_started", "", "", "", "medium", "", ""],
+            ]
+        }
+
+        result = progress_tools.update_task(
+            task_id="T01",
+            name="New Name",
+            project="updt_name",
+        )
+
+        assert result.success is True
+        assert "name" in result.updated_fields
+        mock_sheets_client.update_range.assert_called()
+
+    def test_update_task_move_phase(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task can move task to different phase."""
+        project_tools.setup_project(
+            project="updt_phase",
+            name="Update Task Phase",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考", "優先度", "カテゴリ", "依存タスク"],
+                ["Phase 1", "T01", "Task 1", "not_started", "", "", "", "medium", "", ""],
+            ]
+        }
+
+        result = progress_tools.update_task(
+            task_id="T01",
+            new_phase="Phase 2",
+            project="updt_phase",
+        )
+
+        assert result.success is True
+        assert result.phase_moved is True
+        assert result.old_phase == "Phase 1"
+        assert result.new_phase == "Phase 2"
+        assert "phase" in result.updated_fields
+
+    def test_update_task_multiple_fields(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task can update multiple fields at once."""
+        project_tools.setup_project(
+            project="updt_multi",
+            name="Update Multi Fields",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考", "優先度", "カテゴリ", "依存タスク"],
+                ["Phase 1", "T01", "Old Name", "not_started", "", "", "", "medium", "", ""],
+            ]
+        }
+
+        result = progress_tools.update_task(
+            task_id="T01",
+            name="New Name",
+            description="New description",
+            priority="high",
+            category="feature",
+            status="in_progress",
+            project="updt_multi",
+        )
+
+        assert result.success is True
+        assert "name" in result.updated_fields
+        assert "notes" in result.updated_fields
+        assert "priority" in result.updated_fields
+        assert "category" in result.updated_fields
+        assert "status" in result.updated_fields
+
+    def test_update_task_no_changes(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task with no changes."""
+        project_tools.setup_project(
+            project="updt_nochange",
+            name="Update No Change",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考", "優先度", "カテゴリ", "依存タスク"],
+                ["Phase 1", "T01", "Task 1", "not_started", "", "", "", "medium", "", ""],
+            ]
+        }
+
+        result = progress_tools.update_task(
+            task_id="T01",
+            project="updt_nochange",
+        )
+
+        assert result.success is True
+        assert result.updated_fields == []
+        assert "更新するフィールドがありません" in result.message
