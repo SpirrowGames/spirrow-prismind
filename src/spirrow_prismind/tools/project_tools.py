@@ -354,11 +354,15 @@ class ProjectTools:
                 )
 
             try:
-                # Create project folder under projects_folder
+                # Create project folder under projects_folder (reuse if exists)
                 logger.info(f"Creating project folder '{name}' under projects folder")
-                project_folder = self.drive.create_folder(name, self.projects_folder_id)
+                project_folder, folder_was_created = self.drive.create_folder_if_not_exists(
+                    name, self.projects_folder_id
+                )
                 root_folder_id = project_folder.file_id
-                auto_created_folder = True
+                auto_created_folder = folder_was_created
+                if not folder_was_created:
+                    logger.info(f"Reusing existing folder '{name}' ({root_folder_id})")
 
                 # Create spreadsheet in project folder
                 spreadsheet_name = f"{name}_Summary"
