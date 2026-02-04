@@ -313,7 +313,9 @@ class GoogleDriveClient:
             HttpError: If the API request fails
         """
         try:
-            query = f"name = '{name}' and mimeType = '{MimeType.FOLDER}' and trashed = false"
+            # Escape single quotes in folder name for Drive API query
+            escaped_name = name.replace("\\", "\\\\").replace("'", "\\'")
+            query = f"name = '{escaped_name}' and mimeType = '{MimeType.FOLDER}' and trashed = false"
 
             if parent_id:
                 query += f" and '{parent_id}' in parents"

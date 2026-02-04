@@ -913,6 +913,81 @@ TOOLS = [
             "required": ["phase", "task_id", "name"],
         },
     ),
+    Tool(
+        name="complete_task",
+        description="Mark a task as completed. Convenience method that sets status to 'completed'.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (e.g., T01)",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "Phase name (specify when task_id is ambiguous)",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Completion notes",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID",
+                },
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="start_task",
+        description="Mark a task as in progress. Convenience method that sets status to 'in_progress'.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (e.g., T01)",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "Phase name (specify when task_id is ambiguous)",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID",
+                },
+            },
+            "required": ["task_id"],
+        },
+    ),
+    Tool(
+        name="block_task",
+        description="Mark a task as blocked with blockers list.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (e.g., T01)",
+                },
+                "blockers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of blockers",
+                },
+                "phase": {
+                    "type": "string",
+                    "description": "Phase name (specify when task_id is ambiguous)",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID",
+                },
+            },
+            "required": ["task_id", "blockers"],
+        },
+    ),
     # Summary Operations
     Tool(
         name="update_summary",
@@ -1926,6 +2001,56 @@ class PrismindServer:
                 task_id=args["task_id"],
                 name=args["name"],
                 description=args.get("description", ""),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "task_id": result.task_id,
+                "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        elif name == "complete_task":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.complete_task(
+                task_id=args["task_id"],
+                phase=args.get("phase"),
+                notes=args.get("notes"),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "task_id": result.task_id,
+                "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        elif name == "start_task":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.start_task(
+                task_id=args["task_id"],
+                phase=args.get("phase"),
+                project=args.get("project"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "task_id": result.task_id,
+                "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        elif name == "block_task":
+            if not self._progress_tools:
+                return {"success": False, "error": "Progress tools not initialized"}
+            result = self._progress_tools.block_task(
+                task_id=args["task_id"],
+                blockers=args["blockers"],
+                phase=args.get("phase"),
                 project=args.get("project"),
             )
             return {
