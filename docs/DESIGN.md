@@ -1270,6 +1270,7 @@ class KnowledgeEntry:
 
 | 日付 | 内容 |
 |------|------|
+| 2025-02-04 | DocumentTypeモデルにfolder_idsフィールド追加。フォルダIDキャッシュにより同名フォルダ重複作成バグを修正 |
 | 2025-01-29 | TaskProgressにv2拡張フィールド追加（priority, category, blocked_by）|
 | 2025-01-28 | create_documentの内部処理フローを「作成→移動」から「最初から正しいフォルダに作成」に変更 |
 | 2025-01-12 | setup_projectに重複チェック・類似プロジェクト検索機能追加 |

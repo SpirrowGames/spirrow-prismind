@@ -91,6 +91,7 @@ class GlobalDocumentTypeStorage:
                 "name": dt.name,
                 "description": dt.description,
                 "folder_name": dt.folder_name,
+                "folder_ids": dt.folder_ids,
             }
             for dt in self._types.values()
         ]
@@ -197,6 +198,7 @@ class GlobalDocumentTypeStorage:
                 name=doc_type.name,
                 description=doc_type.description,
                 folder_name=doc_type.folder_name,
+                folder_ids=doc_type.folder_ids,
             )
 
         logger.info(f"Registered global document type: {doc_type.type_id}")

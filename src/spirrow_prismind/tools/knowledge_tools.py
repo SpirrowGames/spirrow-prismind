@@ -29,6 +29,21 @@ class KnowledgeTools:
         "落とし穴",
         "設計パターン",
         "その他",
+        # Lifecycle management categories (used by Magickit)
+        "milestone",
+        "velocity",
+        "quality_gate",
+        "phase_transition",
+        # Task management categories
+        "task",
+        "task_completion",
+        "blocker",
+        # Session management categories
+        "decision",
+        "session_insight",
+        # Execution tracking
+        "実装記録",
+        "実装詳細",
     ]
 
     # Key for pending knowledge queue

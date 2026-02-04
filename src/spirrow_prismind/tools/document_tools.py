@@ -262,20 +262,35 @@ class DocumentTools:
             )
 
         try:
-            # Step 2: Determine target folder using nested path support
-            target_folder_id = config.root_folder_id  # Default to project root
-            folder_path = doc_type_obj.folder_name  # e.g., "設計/詳細設計"
+            # Step 2: Get folder ID from cached folder_ids (avoids name search)
+            target_folder_id = doc_type_obj.get_folder_id(config.project_id)
 
-            if folder_path and config.root_folder_id:
-                # Use ensure_folder_path for nested paths
-                folder_info, created = self.drive.ensure_folder_path(
-                    path=folder_path,
-                    parent_id=config.root_folder_id,
-                )
-                if folder_info:
-                    target_folder_id = folder_info.file_id
-                    if created:
-                        logger.info(f"Created folder path '{folder_path}' in project folder")
+            if not target_folder_id:
+                # Folder ID not cached - create/find folder and cache the ID
+                # This happens on first use or during migration from old data
+                folder_path = doc_type_obj.folder_name  # e.g., "設計/詳細設計"
+
+                if folder_path and config.root_folder_id:
+                    # Use ensure_folder_path for nested paths
+                    folder_info, created = self.drive.ensure_folder_path(
+                        path=folder_path,
+                        parent_id=config.root_folder_id,
+                    )
+                    if folder_info:
+                        target_folder_id = folder_info.file_id
+                        if created:
+                            logger.info(f"Created folder path '{folder_path}' in project folder")
+
+                        # Cache the folder ID for future use (auto-migration)
+                        doc_type_obj.set_folder_id(config.project_id, target_folder_id)
+                        self._save_document_type(doc_type_obj)
+                        logger.info(
+                            f"Cached folder ID for doc_type '{doc_type_obj.type_id}' "
+                            f"in project '{config.project_id}'"
+                        )
+                else:
+                    # No folder path - use project root
+                    target_folder_id = config.root_folder_id
 
             # Step 3: Create document in the correct folder using Drive API
             file_info = self.drive.create_document(
@@ -433,14 +448,24 @@ class DocumentTools:
                     config = self.project_tools.get_project_config(user=user)
                 if config and config.root_folder_id and doc_type_obj.folder_name:
                     try:
-                        # Ensure target folder exists
-                        folder_info, _ = self.drive.ensure_folder_path(
-                            path=doc_type_obj.folder_name,
-                            parent_id=config.root_folder_id,
-                        )
-                        if folder_info:
-                            # Move the document to the new folder
-                            self.drive.move_file(doc_id, folder_info.file_id)
+                        # Try to get cached folder ID first
+                        target_folder_id = doc_type_obj.get_folder_id(config.project_id)
+
+                        if not target_folder_id:
+                            # Folder ID not cached - create/find folder and cache
+                            folder_info, _ = self.drive.ensure_folder_path(
+                                path=doc_type_obj.folder_name,
+                                parent_id=config.root_folder_id,
+                            )
+                            if folder_info:
+                                target_folder_id = folder_info.file_id
+                                # Cache the folder ID
+                                doc_type_obj.set_folder_id(config.project_id, target_folder_id)
+                                self._save_document_type(doc_type_obj)
+
+                        if target_folder_id:
+                            # Move the document to the target folder
+                            self.drive.move_file(doc_id, target_folder_id)
                             logger.info(
                                 f"Moved document '{doc_id}' to folder "
                                 f"'{doc_type_obj.folder_name}'"
@@ -1018,6 +1043,59 @@ class DocumentTools:
                 return doc_type
 
         return None
+
+    def _save_document_type(self, doc_type: DocumentType) -> bool:
+        """Save a document type (update folder_ids, etc.).
+
+        Saves to global storage if is_global, otherwise to project config.
+
+        Args:
+            doc_type: Document type to save
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        if doc_type.is_global:
+            # Update global storage
+            global_storage = GlobalDocumentTypeStorage(rag_client=self.rag)
+            return global_storage.update(doc_type)
+        else:
+            # Update project config
+            config = self.project_tools.get_project_config()
+            if not config:
+                return False
+
+            # Find and update the document type in project config
+            for i, type_data in enumerate(config.document_types):
+                if type_data.get("type_id") == doc_type.type_id:
+                    config.document_types[i] = doc_type.to_dict()
+                    break
+            else:
+                # Not found - add it
+                config.document_types.append(doc_type.to_dict())
+
+            # Save updated config
+            try:
+                config_data = {
+                    "spreadsheet_id": config.spreadsheet_id,
+                    "root_folder_id": config.root_folder_id,
+                    "sheets": config.sheets.to_dict() if config.sheets else {},
+                    "drive": config.drive.to_dict() if config.drive else {},
+                    "docs": config.docs.to_dict() if config.docs else {},
+                    "options": config.options.to_dict() if config.options else {},
+                    "document_types": config.document_types,
+                    "created_at": config.created_at.isoformat() if config.created_at else "",
+                }
+                self.project_tools._save_project_config_with_fallback(
+                    project_id=config.project_id,
+                    name=config.name,
+                    description=config.description,
+                    config_data=config_data,
+                )
+                return True
+            except Exception as e:
+                logger.error(f"Failed to save document type to project config: {e}")
+                return False
 
     def find_similar_document_type(
         self,

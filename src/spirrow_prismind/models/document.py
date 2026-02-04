@@ -12,10 +12,31 @@ class DocumentType:
     type_id: str  # e.g., "meeting_notes"
     name: str  # e.g., "議事録"
     folder_name: str  # Folder name in Google Drive
+    folder_ids: dict[str, str] = field(default_factory=dict)  # {project_id: folder_id}
     template_doc_id: str = ""  # Optional Google Docs template ID
     description: str = ""
     fields: list[str] = field(default_factory=list)  # Custom metadata fields
     is_global: bool = False  # True for global types, False for project-specific
+
+    def get_folder_id(self, project_id: str) -> Optional[str]:
+        """Get the folder ID for a project.
+
+        Args:
+            project_id: Project identifier
+
+        Returns:
+            Folder ID if found, None otherwise
+        """
+        return self.folder_ids.get(project_id)
+
+    def set_folder_id(self, project_id: str, folder_id: str) -> None:
+        """Set the folder ID for a project.
+
+        Args:
+            project_id: Project identifier
+            folder_id: Google Drive folder ID
+        """
+        self.folder_ids[project_id] = folder_id
 
     def to_dict(self) -> dict:
         """Convert to dictionary for storage."""
@@ -23,6 +44,7 @@ class DocumentType:
             "type_id": self.type_id,
             "name": self.name,
             "folder_name": self.folder_name,
+            "folder_ids": self.folder_ids,
             "template_doc_id": self.template_doc_id,
             "description": self.description,
             "fields": self.fields,
@@ -38,6 +60,7 @@ class DocumentType:
             type_id=data.get("type_id", ""),
             name=data.get("name", ""),
             folder_name=data.get("folder_name", ""),
+            folder_ids=data.get("folder_ids", {}),
             template_doc_id=data.get("template_doc_id", ""),
             description=data.get("description", ""),
             fields=data.get("fields", []),

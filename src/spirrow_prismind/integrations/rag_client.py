@@ -961,6 +961,7 @@ class RAGClient:
         name: str,
         description: str,
         folder_name: str,
+        folder_ids: Optional[dict[str, str]] = None,
     ) -> RAGOperationResult:
         """Save a document type to RAG for semantic search.
 
@@ -972,6 +973,7 @@ class RAGClient:
             name: Display name (e.g., "API仕様書")
             description: Description of the document type
             folder_name: Folder name in Google Drive
+            folder_ids: Mapping of project_id to folder_id for cached folder IDs
 
         Returns:
             RAGOperationResult
@@ -992,6 +994,7 @@ class RAGClient:
             "name": name,
             "description": description,
             "folder_name": folder_name,
+            "folder_ids": folder_ids or {},
             "updated_at": datetime.now().isoformat(),
         }
 
