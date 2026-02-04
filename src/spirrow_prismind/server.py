@@ -830,6 +830,24 @@ TOOLS = [
             "required": ["knowledge_id"],
         },
     ),
+    Tool(
+        name="delete_knowledge",
+        description="Delete a knowledge entry from RAG.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "knowledge_id": {
+                    "type": "string",
+                    "description": "ID of the knowledge entry to delete",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name for verification (optional safety check)",
+                },
+            },
+            "required": ["knowledge_id"],
+        },
+    ),
     # Progress Management
     Tool(
         name="get_progress",
@@ -1938,6 +1956,21 @@ class PrismindServer:
                 "success": result.success,
                 "knowledge_id": result.knowledge_id,
                 "updated_fields": result.updated_fields,
+                "message": result.message,
+            }
+
+        elif name == "delete_knowledge":
+            result = self._knowledge_tools.delete_knowledge(
+                knowledge_id=args.get("knowledge_id", ""),
+                project=args.get("project"),
+                user=user,
+            )
+            return {
+                "success": result.success,
+                "knowledge_id": result.knowledge_id,
+                "project": result.project,
+                "rag_deleted": result.rag_deleted,
+                "cache_cleared": result.cache_cleared,
                 "message": result.message,
             }
 

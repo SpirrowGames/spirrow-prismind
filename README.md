@@ -127,6 +127,8 @@ Add to your Claude Code settings:
 |------|-------------|
 | `add_knowledge` | Add knowledge entries |
 | `search_knowledge` | Search knowledge base |
+| `update_knowledge` | Update an existing knowledge entry |
+| `delete_knowledge` | Delete a knowledge entry |
 
 ## Architecture
 

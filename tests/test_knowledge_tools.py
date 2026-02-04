@@ -256,16 +256,75 @@ class TestDeleteKnowledge:
         knowledge_id = add_result.knowledge_id
 
         # Delete it
-        success = knowledge_tools.delete_knowledge(knowledge_id)
+        result = knowledge_tools.delete_knowledge(knowledge_id)
 
-        assert success is True
+        assert result.success is True
+        assert result.knowledge_id == knowledge_id
+        assert result.rag_deleted is True
+        assert result.message == "知見を削除しました。"
 
     def test_delete_knowledge_not_found(self, knowledge_tools):
         """Test delete knowledge that doesn't exist."""
-        success = knowledge_tools.delete_knowledge("nonexistent_id")
+        result = knowledge_tools.delete_knowledge("nonexistent_id")
 
-        # Should return False for non-existent
-        assert success is False
+        # Should return failure for non-existent
+        assert result.success is False
+        assert result.knowledge_id == "nonexistent_id"
+        assert "見つかりません" in result.message
+
+    def test_delete_knowledge_project_mismatch(self, knowledge_tools, project_tools):
+        """Test delete knowledge with project verification mismatch."""
+        project_tools.setup_project(
+            project="proj_a",
+            name="Project A",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add knowledge to proj_a
+        add_result = knowledge_tools.add_knowledge(
+            content="Knowledge for proj_a",
+            category="その他",
+            project="proj_a",
+        )
+
+        assert add_result.success is True
+        knowledge_id = add_result.knowledge_id
+
+        # Try to delete with wrong project verification
+        result = knowledge_tools.delete_knowledge(knowledge_id, project="proj_b")
+
+        assert result.success is False
+        assert "プロジェクトが一致しません" in result.message
+
+    def test_delete_knowledge_project_match(self, knowledge_tools, project_tools):
+        """Test delete knowledge with correct project verification."""
+        project_tools.setup_project(
+            project="proj_c",
+            name="Project C",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        # Add knowledge to proj_c
+        add_result = knowledge_tools.add_knowledge(
+            content="Knowledge for proj_c",
+            category="その他",
+            project="proj_c",
+        )
+
+        assert add_result.success is True
+        knowledge_id = add_result.knowledge_id
+
+        # Delete with correct project verification
+        result = knowledge_tools.delete_knowledge(knowledge_id, project="proj_c")
+
+        assert result.success is True
+        assert result.project == "proj_c"
 
 
 class TestGenerateTags:

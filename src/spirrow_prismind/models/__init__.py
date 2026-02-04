@@ -17,6 +17,7 @@ from .document import (
 )
 from .knowledge import (
     AddKnowledgeResult,
+    DeleteKnowledgeResult,
     KnowledgeEntry,
     SearchKnowledgeResult,
     UpdateKnowledgeResult,
@@ -96,6 +97,7 @@ __all__ = [
     "UpdateDocumentResult",
     # Knowledge
     "AddKnowledgeResult",
+    "DeleteKnowledgeResult",
     "KnowledgeEntry",
     "SearchKnowledgeResult",
     "UpdateKnowledgeResult",

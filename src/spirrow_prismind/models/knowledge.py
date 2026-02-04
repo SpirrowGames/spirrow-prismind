@@ -63,6 +63,18 @@ class UpdateKnowledgeResult:
     message: str = ""
 
 
+@dataclass
+class DeleteKnowledgeResult:
+    """Result of deleting a knowledge entry."""
+
+    success: bool
+    knowledge_id: str = ""
+    project: str = ""
+    rag_deleted: bool = False
+    cache_cleared: bool = False
+    message: str = ""
+
+
 # Knowledge categories
 KNOWLEDGE_CATEGORIES = [
     "問題解決",

@@ -9,6 +9,7 @@ from typing import Optional
 from ..integrations import MemoryClient, RAGClient
 from ..models import (
     AddKnowledgeResult,
+    DeleteKnowledgeResult,
     KnowledgeEntry,
     SearchKnowledgeResult,
     UpdateKnowledgeResult,
@@ -659,21 +660,81 @@ class KnowledgeTools:
     def delete_knowledge(
         self,
         knowledge_id: str,
-    ) -> bool:
+        project: Optional[str] = None,
+        user: Optional[str] = None,
+    ) -> DeleteKnowledgeResult:
         """Delete a knowledge entry.
 
         Args:
             knowledge_id: Knowledge entry ID
+            project: Project name for verification (optional safety check)
+            user: User ID
 
         Returns:
-            True if successful
+            DeleteKnowledgeResult
         """
-        # Also clear from cache
-        if self.memory and self.memory.is_available:
-            self.memory.clear_recent_knowledge(knowledge_id)
+        user = user or self.user_name
 
-        result = self.rag.delete_document(knowledge_id)
-        return result.success
+        # Check if RAG is available
+        if not self.rag.is_available:
+            return DeleteKnowledgeResult(
+                success=False,
+                knowledge_id=knowledge_id,
+                message="RAGサーバーに接続できません。",
+            )
+
+        # Get existing document to verify it exists and check project
+        doc = self.rag.get_document(knowledge_id)
+        if doc is None:
+            return DeleteKnowledgeResult(
+                success=False,
+                knowledge_id=knowledge_id,
+                message=f"知見が見つかりません: {knowledge_id}",
+            )
+
+        # Get document's project from metadata
+        doc_project = doc.metadata.get("project", "") if doc.metadata else ""
+
+        # Verify project if specified (safety check)
+        if project is not None and doc_project and doc_project != project:
+            return DeleteKnowledgeResult(
+                success=False,
+                knowledge_id=knowledge_id,
+                project=doc_project,
+                message=f"プロジェクトが一致しません。知見のプロジェクト: {doc_project}, 指定されたプロジェクト: {project}",
+            )
+
+        # Delete from RAG
+        rag_result = self.rag.delete_document(knowledge_id)
+        rag_deleted = rag_result.success
+
+        # Clear from cache
+        cache_cleared = False
+        if self.memory and self.memory.is_available:
+            try:
+                self.memory.clear_recent_knowledge(knowledge_id)
+                cache_cleared = True
+            except Exception as e:
+                logger.warning(f"Failed to clear knowledge from cache: {e}")
+
+        if not rag_deleted:
+            return DeleteKnowledgeResult(
+                success=False,
+                knowledge_id=knowledge_id,
+                project=doc_project,
+                rag_deleted=False,
+                cache_cleared=cache_cleared,
+                message=f"知見の削除に失敗しました: {rag_result.message}",
+            )
+
+        return DeleteKnowledgeResult(
+            success=True,
+            knowledge_id=knowledge_id,
+            project=doc_project,
+            rag_deleted=True,
+            cache_cleared=cache_cleared,
+            message="知見を削除しました。",
+        )
 
     def update_knowledge(
         self,

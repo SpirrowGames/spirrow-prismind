@@ -127,6 +127,8 @@ Claude Codeの設定に追加:
 |--------|------|
 | `add_knowledge` | 知見の追加 |
 | `search_knowledge` | 知見の検索 |
+| `update_knowledge` | 既存知見の更新 |
+| `delete_knowledge` | 知見の削除 |
 
 ## アーキテクチャ
 
