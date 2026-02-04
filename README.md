@@ -1,16 +1,29 @@
 # Spirrow-Prismind
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![MCP](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io)
+
 **MCP Server for Context-Aware Knowledge Management**
 
-複数の情報源（Google Drive, RAG, MCP Memory Server）を統合し、コンテキスト対応の知識管理を提供するMCPサーバです。
+An MCP (Model Context Protocol) server that integrates multiple data sources—Google Drive, RAG (Retrieval-Augmented Generation), and MCP Memory Server—to provide context-aware knowledge management for AI assistants.
+
+> **Note**: 日本語版は [README.ja.md](README.ja.md) を参照してください。
 
 ## Features
 
-- **セッション管理**: 作業状態の保存・復元、推奨ドキュメントの自動提示
-- **プロジェクト管理**: 複数プロジェクトの切り替え、類似プロジェクト検索
-- **ドキュメント操作**: Google Docs連携、目録への自動登録
-- **目録管理**: セマンティック検索、Google Sheets同期
-- **知見管理**: RAGベースの知見蓄積・検索
+- **Session Management**: Save and restore work states, automatically suggest relevant documents
+- **Project Management**: Switch between multiple projects, search for similar projects
+- **Document Operations**: Google Docs integration with automatic catalog registration
+- **Catalog Management**: Semantic search with Google Sheets synchronization
+- **Knowledge Management**: RAG-based knowledge storage and retrieval
+
+## Requirements
+
+- Python 3.11 or higher
+- Google Cloud project with OAuth 2.0 credentials
+- RAG server (ChromaDB compatible)
+- MCP Memory Server (optional)
 
 ## Installation
 
@@ -19,32 +32,32 @@
 git clone https://github.com/SpirrowGames/spirrow-prismind.git
 cd spirrow-prismind
 
-# Install dependencies
+# Install the package
 pip install -e .
 ```
 
 ## Configuration
 
-1. Copy the example config:
-```bash
-cp config.toml.example config.toml
-```
+1. **Copy the example config:**
+   ```bash
+   cp config.toml.example config.toml
+   ```
 
-2. Set up Google OAuth credentials:
-   - Create a project in Google Cloud Console
+2. **Set up Google OAuth credentials:**
+   - Create a project in [Google Cloud Console](https://console.cloud.google.com/)
    - Enable Google Docs, Drive, and Sheets APIs
-   - Create OAuth 2.0 credentials
+   - Create OAuth 2.0 credentials (Desktop application)
    - Download `credentials.json` and place it in the config directory
 
-3. Configure external services:
-   - RAG Server (ChromaDB compatible)
-   - MCP Memory Server
+3. **Configure external services in `config.toml`:**
+   - RAG Server endpoint (ChromaDB compatible)
+   - MCP Memory Server connection (optional)
 
 ## Usage
 
-### As MCP Server
+### With Claude Desktop
 
-Add to your Claude Desktop config:
+Add to your Claude Desktop configuration (`claude_desktop_config.json`):
 
 ```json
 {
@@ -59,77 +72,130 @@ Add to your Claude Desktop config:
 }
 ```
 
-### Available Tools
+### With Claude Code
 
-#### Session Management
-- `start_session` - セッション開始、状態復元
-- `end_session` - セッション終了、状態保存
-- `save_session` - セッション中間保存
+Add to your Claude Code settings:
 
-#### Project Management
-- `setup_project` - 新規プロジェクトセットアップ
-- `switch_project` - プロジェクト切り替え
-- `list_projects` - プロジェクト一覧
-- `update_project` - プロジェクト設定更新
-- `delete_project` - プロジェクト削除
+```json
+{
+  "mcpServers": {
+    "prismind": {
+      "command": "spirrow-prismind",
+      "env": {
+        "PRISMIND_CONFIG": "/path/to/config.toml"
+      }
+    }
+  }
+}
+```
 
-#### Document Operations
-- `get_document` - ドキュメント検索・取得
-- `create_document` - ドキュメント作成
-- `update_document` - ドキュメント更新
+## Available Tools
 
-#### Catalog Operations
-- `search_catalog` - 目録検索
-- `sync_catalog` - 目録同期（Sheets → RAG）
+### Session Management
+| Tool | Description |
+|------|-------------|
+| `start_session` | Start a session and restore previous state |
+| `end_session` | End session and save state for handoff |
+| `save_session` | Save intermediate session state |
+| `list_sessions` | List all sessions for a project |
+| `delete_session` | Delete a specific session |
 
-#### Knowledge Operations
-- `add_knowledge` - 知見登録
-- `search_knowledge` - 知見検索
+### Project Management
+| Tool | Description |
+|------|-------------|
+| `setup_project` | Set up a new project |
+| `switch_project` | Switch to another project |
+| `list_projects` | List all projects |
+| `update_project` | Update project settings |
+| `delete_project` | Delete a project |
+
+### Document Operations
+| Tool | Description |
+|------|-------------|
+| `get_document` | Search and retrieve documents |
+| `create_document` | Create a new document |
+| `update_document` | Update an existing document |
+
+### Catalog Operations
+| Tool | Description |
+|------|-------------|
+| `search_catalog` | Search the document catalog |
+| `sync_catalog` | Sync catalog (Sheets → RAG) |
+
+### Knowledge Operations
+| Tool | Description |
+|------|-------------|
+| `add_knowledge` | Add knowledge entries |
+| `search_knowledge` | Search knowledge base |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    MCP Server                            │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │                    Tools                          │   │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐           │   │
-│  │  │ Session │ │ Project │ │ Document│ ...       │   │
-│  │  └────┬────┘ └────┬────┘ └────┬────┘           │   │
-│  └───────┼──────────┼──────────┼──────────────────┘   │
-│          │          │          │                       │
-│  ┌───────┴──────────┴──────────┴──────────────────┐   │
-│  │              Integrations                        │   │
-│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐   │   │
-│  │  │  RAG   │ │ Memory │ │ Docs   │ │ Drive  │   │   │
-│  │  │ Client │ │ Client │ │ Client │ │ Client │   │   │
-│  │  └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘   │   │
-│  └───────┼──────────┼──────────┼──────────┼───────┘   │
-└──────────┼──────────┼──────────┼──────────┼───────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       MCP Server                             │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │                        Tools                           │  │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐      │  │
+│  │  │ Session │ │ Project │ │Document │ │Knowledge│ ...  │  │
+│  │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘      │  │
+│  └───────┼──────────┼──────────┼──────────┼─────────────┘  │
+│          │          │          │          │                 │
+│  ┌───────┴──────────┴──────────┴──────────┴─────────────┐  │
+│  │                    Integrations                       │  │
+│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐         │  │
+│  │  │  RAG   │ │ Memory │ │  Docs  │ │ Drive  │         │  │
+│  │  │ Client │ │ Client │ │ Client │ │ Client │         │  │
+│  │  └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘         │  │
+│  └───────┼──────────┼──────────┼──────────┼─────────────┘  │
+└──────────┼──────────┼──────────┼──────────┼────────────────┘
            │          │          │          │
            ▼          ▼          ▼          ▼
       ┌────────┐ ┌────────┐ ┌────────────────────┐
-      │ChromaDB│ │ Memory │ │   Google APIs      │
+      │ChromaDB│ │ Memory │ │    Google APIs     │
       │  RAG   │ │ Server │ │ Docs/Drive/Sheets  │
       └────────┘ └────────┘ └────────────────────┘
 ```
 
 ## Development
 
+### Setup
+
 ```bash
-# Install dev dependencies
+# Install with dev dependencies
 pip install -e ".[dev]"
+```
 
-# Run tests
+### Testing
+
+```bash
 pytest
+```
 
+### Code Quality
+
+```bash
 # Format code
 ruff format .
+
+# Lint and fix
 ruff check --fix .
 ```
 
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
 ## License
 
-MIT License - SpirrowGames
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-詳細は [LICENSE](LICENSE) ファイルを参照してください。
+## Related Projects
+
+- [Model Context Protocol](https://modelcontextprotocol.io) - The protocol specification
+- [MCP Servers](https://github.com/modelcontextprotocol/servers) - Official MCP server implementations
