@@ -1024,6 +1024,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Project ID",
                 },
+                "user": {
+                    "type": "string",
+                    "description": "User ID for multi-user support",
+                },
             },
             "required": ["task_id"],
         },
@@ -1045,6 +1049,10 @@ TOOLS = [
                 "project": {
                     "type": "string",
                     "description": "Project ID",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "User ID for multi-user support",
                 },
             },
             "required": ["task_id"],
@@ -1101,6 +1109,10 @@ TOOLS = [
                 "project": {
                     "type": "string",
                     "description": "Project ID",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "User ID for multi-user support",
                 },
             },
             "required": ["task_id"],
