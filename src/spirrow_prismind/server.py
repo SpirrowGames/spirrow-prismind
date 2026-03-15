@@ -2111,6 +2111,9 @@ class PrismindServer:
                                 "blockers": t.blockers,
                                 "completed_at": t.completed_at.isoformat() if t.completed_at else None,
                                 "notes": t.notes,
+                                "priority": t.priority,
+                                "category": t.category,
+                                "blocked_by": t.blocked_by,
                             }
                             for t in p.tasks
                         ],
