@@ -347,7 +347,7 @@ class DocumentTools:
                 logger.error(f"Failed to register in Sheets catalog: {e}")
                 catalog_warning = f"目録シートへの登録に失敗しました: {e}"
 
-            # Step 7: Register in RAG cache
+            # Step 7: Register in RAG cache (with document content for search)
             self.rag.add_catalog_entry(
                 doc_id=doc_id,
                 name=name,
@@ -362,6 +362,7 @@ class DocumentTools:
                     "source": "Google Docs",
                     "url": doc_url,
                 },
+                content=content or "",
             )
 
             message = f"ドキュメント '{name}' を作成しました。"

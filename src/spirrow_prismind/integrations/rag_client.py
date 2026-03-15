@@ -761,9 +761,10 @@ class RAGClient:
         project: str,
         phase_task: str,
         metadata: dict[str, Any],
+        content: str = "",
     ) -> RAGOperationResult:
         """Add a catalog entry.
-        
+
         Args:
             doc_id: Document ID
             name: Document name
@@ -771,12 +772,13 @@ class RAGClient:
             project: Project ID
             phase_task: Phase-Task identifier
             metadata: Additional metadata
-            
+            content: Document body text for RAG indexing
+
         Returns:
             RAGOperationResult
         """
         catalog_id = f"catalog:{project}:{doc_id}"
-        content = f"{name} {doc_type} {phase_task}"
+        content = content if content else f"{name} {doc_type} {phase_task}"
         
         full_metadata = {
             "type": "catalog",
