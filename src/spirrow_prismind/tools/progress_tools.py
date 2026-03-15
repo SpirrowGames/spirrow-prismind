@@ -81,6 +81,9 @@ class ProgressTools:
                 message=f"プロジェクト '{project}' の設定が見つかりません。",
             )
 
+        # Use resolved project ID (handles name-to-ID resolution)
+        project = config.project_id
+
         try:
             # Check if progress sheet exists
             if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.progress):
@@ -250,6 +253,9 @@ class ProgressTools:
                 task_id=task_id,
                 message=f"プロジェクト '{project}' の設定が見つかりません。",
             )
+
+        # Use resolved project ID (handles name-to-ID resolution)
+        project = config.project_id
 
         try:
             # Check if progress sheet exists
@@ -434,6 +440,9 @@ class ProgressTools:
                 message=f"プロジェクト '{project}' の設定が見つかりません。",
             )
 
+        # Use resolved project ID (handles name-to-ID resolution)
+        project = config.project_id
+
         try:
             # Check if progress sheet exists
             if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.progress):
@@ -613,6 +622,9 @@ class ProgressTools:
                 message=f"プロジェクト '{project}' の設定が見つかりません。",
             )
 
+        # Use resolved project ID (handles name-to-ID resolution)
+        project = config.project_id
+
         try:
             # Check if progress sheet exists
             if not self.sheets.sheet_exists(config.spreadsheet_id, config.sheets.progress):
@@ -730,6 +742,9 @@ class ProgressTools:
                 project=project,
                 message=f"プロジェクト '{project}' の設定が見つかりません。",
             )
+
+        # Use resolved project ID (handles name-to-ID resolution)
+        project = config.project_id
 
         try:
             # Check if progress sheet exists
@@ -921,6 +936,9 @@ class ProgressTools:
                 project=project,
                 message=f"プロジェクト '{project}' の設定が見つかりません。",
             )
+
+        # Use resolved project ID (handles name-to-ID resolution)
+        project = config.project_id
 
         # Validate status if provided
         if status is not None:

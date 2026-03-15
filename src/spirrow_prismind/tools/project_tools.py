@@ -116,12 +116,56 @@ class ProjectTools:
 
     # ===== Fallback Storage Helpers =====
 
+    def _resolve_project_id(self, project: str) -> Optional[str]:
+        """Resolve a project name or ID to its canonical project ID.
+
+        Tries exact ID match first, then falls back to name-based lookup.
+
+        Args:
+            project: Project ID or full project name.
+
+        Returns:
+            Resolved project ID, or None if not found.
+        """
+        # Exact ID match in fallback storage
+        if project in ProjectTools._fallback_projects:
+            return project
+
+        # Name-based search in fallback storage
+        for pid, data in ProjectTools._fallback_projects.items():
+            if data.get("name", "") == project:
+                logger.info(f"Resolved project name '{project}' to ID '{pid}'")
+                return pid
+
+        # Try RAG: exact ID match
+        if self.rag.is_available:
+            try:
+                result = self.rag.get_project_config(project)
+                if result:
+                    return project
+            except Exception:
+                pass
+
+            # RAG: name-based search via list
+            try:
+                for doc in self.rag.list_projects():
+                    if doc.metadata.get("name", "") == project:
+                        pid = doc.metadata.get("project_id", "")
+                        if pid:
+                            logger.info(f"Resolved project name '{project}' to ID '{pid}' (via RAG)")
+                            return pid
+            except Exception:
+                pass
+
+        return None
+
     def _get_project_config_with_fallback(self, project: str) -> Optional[RAGDocument]:
         """Get project config from fallback storage or RAG.
 
         Prefers fallback storage when project exists there, since fallback always
         contains the latest updates (RAG upsert may fail).
         Falls back to RAG for projects not yet in fallback storage.
+        If exact ID match fails, attempts name-based resolution.
         """
         # Check fallback storage first (contains latest updates)
         data = ProjectTools._fallback_projects.get(project)
@@ -140,6 +184,11 @@ class ProjectTools:
                     return result
             except Exception as e:
                 logger.warning(f"RAG get failed for project '{project}': {e}")
+
+        # Try name-based resolution as fallback
+        resolved_id = self._resolve_project_id(project)
+        if resolved_id and resolved_id != project:
+            return self._get_project_config_with_fallback(resolved_id)
 
         return None
 
