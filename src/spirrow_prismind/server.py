@@ -2271,6 +2271,7 @@ class PrismindServer:
                 blockers=args.get("blockers"),
                 new_phase=args.get("new_phase"),
                 project=args.get("project"),
+                user=args.get("user"),
             )
             return {
                 "success": result.success,
