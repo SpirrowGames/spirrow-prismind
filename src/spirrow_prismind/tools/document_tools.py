@@ -697,11 +697,11 @@ class DocumentTools:
             "active",                       # ステータス
         ]
         
-        # Append to catalog sheet
-        self.sheets.append_rows(
+        self.sheets.safe_append_row(
             spreadsheet_id=config.spreadsheet_id,
-            range_name=f"{config.sheets.catalog}!A:M",
-            values=[row],
+            sheet_name=config.sheets.catalog,
+            values=row,
+            end_column="M",
         )
 
     def list_document_types(

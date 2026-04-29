@@ -472,11 +472,11 @@ class ProgressTools:
 
             row = task_to_sheet_row(phase, task)
 
-            # Append to sheet (A:J for v2 extended columns)
-            self.sheets.append_rows(
+            self.sheets.safe_append_row(
                 spreadsheet_id=config.spreadsheet_id,
-                range_name=f"{config.sheets.progress}!A:J",
-                values=[row],
+                sheet_name=config.sheets.progress,
+                values=row,
+                end_column="J",
             )
 
             return UpdateProgressResult(

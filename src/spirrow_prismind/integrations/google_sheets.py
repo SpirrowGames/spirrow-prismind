@@ -517,6 +517,49 @@ class GoogleSheetsClient:
             spreadsheet_id, range_name, values, value_input_option
         )
 
+    def safe_append_row(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        values: list[Any],
+        end_column: str = "",
+        value_input_option: str = "USER_ENTERED",
+    ) -> dict:
+        """Append a single row at the next empty row, computed explicitly.
+
+        Avoids the values.append() table auto-detection bug: when prior
+        rows are sparse or shifted, append() can latch onto a misaligned
+        "table" and place new data in unexpected columns. This method
+        finds the next empty row by reading column A length, then writes
+        with an explicit A1-notation range.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_name: Sheet/tab name (without quotes/backticks)
+            values: Single row as a flat list of cell values
+            end_column: Column letter for the last column (e.g., "J").
+                        Computed from len(values) if empty.
+            value_input_option: How to interpret input
+
+        Returns:
+            API response from update_sheet_values
+        """
+        if not end_column:
+            n = len(values)
+            end_column = ""
+            while n > 0:
+                n, rem = divmod(n - 1, 26)
+                end_column = chr(ord("A") + rem) + end_column
+
+        column_a_range = f"{sheet_name}!A:A"
+        existing = self.read_range(spreadsheet_id, column_a_range)
+        next_row = len(existing.get("values", [])) + 1
+
+        target_range = f"{sheet_name}!A{next_row}:{end_column}{next_row}"
+        return self.update_sheet_values(
+            spreadsheet_id, target_range, [values], value_input_option
+        )
+
     def get_sheet_id_by_name(
         self,
         spreadsheet_id: str,
