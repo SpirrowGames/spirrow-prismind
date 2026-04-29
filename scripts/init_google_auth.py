@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/sgadmin/services/spirrow/spirrow-prismind/.venv/bin/python
 """
 Google OAuth認証の初期化スクリプト
 
@@ -93,7 +93,6 @@ def main():
 
     # Run OAuth flow
     print("OAuth認証フローを開始します...")
-    print("ブラウザが開きます。Googleアカウントでログインしてください。")
     print()
 
     try:
@@ -107,10 +106,24 @@ def main():
             "https://www.googleapis.com/auth/spreadsheets",
         ]
 
+        AUTH_PORT = 18080
+
         flow = InstalledAppFlow.from_client_secrets_file(
             credentials_path, SCOPES
         )
-        creds = flow.run_local_server(port=0, timeout_seconds=120)
+
+        print(f"ヘッドレス環境の場合、SSHポートフォワーディングを設定してください:")
+        print(f"  ssh -L {AUTH_PORT}:localhost:{AUTH_PORT} <user>@<host>")
+        print()
+        print(f"ローカルサーバーをポート {AUTH_PORT} で起動します...")
+        print("表示されるURLをブラウザで開いてください。")
+        print()
+
+        creds = flow.run_local_server(
+            port=AUTH_PORT,
+            timeout_seconds=300,
+            open_browser=False,
+        )
 
         # Save the token
         os.makedirs(os.path.dirname(token_path), exist_ok=True)
