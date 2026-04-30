@@ -882,7 +882,7 @@ TOOLS = [
                 },
                 "phase": {
                     "type": "string",
-                    "description": "Phase name (specify when task_id is ambiguous)",
+                    "description": "Phase name (empty string for auto-resolve from unique match)",
                 },
                 "blockers": {
                     "type": "array",
@@ -898,7 +898,7 @@ TOOLS = [
                     "description": "Project ID",
                 },
             },
-            "required": ["task_id", "status"],
+            "required": ["task_id", "status", "phase"],
         },
     ),
     Tool(
@@ -943,7 +943,7 @@ TOOLS = [
                 },
                 "phase": {
                     "type": "string",
-                    "description": "Phase name (specify when task_id is ambiguous)",
+                    "description": "Phase name (empty string for auto-resolve from unique match)",
                 },
                 "notes": {
                     "type": "string",
@@ -954,7 +954,7 @@ TOOLS = [
                     "description": "Project ID",
                 },
             },
-            "required": ["task_id"],
+            "required": ["task_id", "phase"],
         },
     ),
     Tool(
@@ -969,14 +969,14 @@ TOOLS = [
                 },
                 "phase": {
                     "type": "string",
-                    "description": "Phase name (specify when task_id is ambiguous)",
+                    "description": "Phase name (empty string for auto-resolve from unique match)",
                 },
                 "project": {
                     "type": "string",
                     "description": "Project ID",
                 },
             },
-            "required": ["task_id"],
+            "required": ["task_id", "phase"],
         },
     ),
     Tool(
@@ -996,14 +996,14 @@ TOOLS = [
                 },
                 "phase": {
                     "type": "string",
-                    "description": "Phase name (specify when task_id is ambiguous)",
+                    "description": "Phase name (empty string for auto-resolve from unique match)",
                 },
                 "project": {
                     "type": "string",
                     "description": "Project ID",
                 },
             },
-            "required": ["task_id", "blockers"],
+            "required": ["task_id", "blockers", "phase"],
         },
     ),
     Tool(
@@ -1018,7 +1018,7 @@ TOOLS = [
                 },
                 "phase": {
                     "type": "string",
-                    "description": "Phase name (required when task_id exists in multiple phases)",
+                    "description": "Phase name (empty string for auto-resolve from unique match)",
                 },
                 "project": {
                     "type": "string",
@@ -1029,7 +1029,7 @@ TOOLS = [
                     "description": "User ID for multi-user support",
                 },
             },
-            "required": ["task_id"],
+            "required": ["task_id", "phase"],
         },
     ),
     Tool(
@@ -1044,7 +1044,7 @@ TOOLS = [
                 },
                 "phase": {
                     "type": "string",
-                    "description": "Phase name (required when task_id exists in multiple phases)",
+                    "description": "Phase name (empty string for auto-resolve from unique match)",
                 },
                 "project": {
                     "type": "string",
@@ -1055,7 +1055,7 @@ TOOLS = [
                     "description": "User ID for multi-user support",
                 },
             },
-            "required": ["task_id"],
+            "required": ["task_id", "phase"],
         },
     ),
     Tool(
@@ -1070,7 +1070,7 @@ TOOLS = [
                 },
                 "phase": {
                     "type": "string",
-                    "description": "Current phase name (required when task_id exists in multiple phases)",
+                    "description": "Current phase name (empty string for auto-resolve from unique match)",
                 },
                 "name": {
                     "type": "string",
@@ -1115,7 +1115,7 @@ TOOLS = [
                     "description": "User ID for multi-user support",
                 },
             },
-            "required": ["task_id"],
+            "required": ["task_id", "phase"],
         },
     ),
     # Summary Operations

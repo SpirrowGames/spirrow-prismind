@@ -288,7 +288,7 @@ class ProgressTools:
             if rows[0] and rows[0][0] in ["フェーズ", "Phase"]:
                 start_row = 1
 
-            target_row_idx = -1
+            matching_rows: list[tuple[int, str]] = []
             for idx, row in enumerate(rows[start_row:], start=start_row):
                 if len(row) < 2:
                     continue
@@ -297,19 +297,28 @@ class ProgressTools:
                 row_task_id = row[1] if len(row) > 1 else ""
 
                 if row_task_id == task_id:
-                    # If phase is specified, match it too
                     if phase and row_phase != phase:
                         continue
-                    target_row_idx = idx
-                    break
+                    matching_rows.append((idx, row_phase))
 
-            if target_row_idx < 0:
+            if not matching_rows:
                 return UpdateProgressResult(
                     success=False,
                     project=project,
                     task_id=task_id,
                     message=f"タスク '{task_id}' が見つかりません。",
                 )
+
+            if len(matching_rows) > 1 and not phase:
+                phases_list = ", ".join(p for _, p in matching_rows)
+                return UpdateProgressResult(
+                    success=False,
+                    project=project,
+                    task_id=task_id,
+                    message=f"タスク '{task_id}' が複数のフェーズに存在します: {phases_list}。phase を指定してください。",
+                )
+
+            target_row_idx = matching_rows[0][0]
 
             # Update the row
             updated_fields = ["status"]

@@ -350,6 +350,64 @@ class TestUpdateTaskStatus:
         assert result.success is True
         assert "priority" not in result.updated_fields  # Invalid priority not updated
 
+    def test_update_task_status_ambiguous(self, progress_tools, mock_sheets_client, project_tools):
+        """Test update_task_status fails when task_id exists in multiple phases without phase."""
+        project_tools.setup_project(
+            project="upd_ambig",
+            name="Update Ambiguous",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task A", "not_started"],
+                ["Phase 2", "T01", "Task B", "not_started"],
+            ]
+        }
+
+        result = progress_tools.update_task_status(
+            task_id="T01",
+            status="in_progress",
+            project="upd_ambig",
+        )
+
+        assert result.success is False
+        assert "複数のフェーズに存在" in result.message
+
+    def test_update_task_status_phase_disambiguates(
+        self, progress_tools, mock_sheets_client, project_tools
+    ):
+        """Test update_task_status succeeds with phase specified for ambiguous task."""
+        project_tools.setup_project(
+            project="upd_phase",
+            name="Update Phase",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス"],
+                ["Phase 1", "T01", "Task A", "not_started"],
+                ["Phase 2", "T01", "Task B", "not_started"],
+            ]
+        }
+
+        result = progress_tools.update_task_status(
+            task_id="T01",
+            status="in_progress",
+            phase="Phase 2",
+            project="upd_phase",
+        )
+
+        assert result.success is True
+
 
 class TestAddTask:
     """Tests for add_task method."""
