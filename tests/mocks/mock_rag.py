@@ -426,10 +426,11 @@ class MockRAGClient(RAGClient):
         project: str,
         phase_task: str,
         metadata: dict[str, Any],
+        content: str = "",
     ) -> RAGOperationResult:
         """Add a catalog entry."""
         catalog_id = f"catalog:{project}:{doc_id}"
-        content = f"{name} {doc_type} {phase_task}"
+        content = content if content else f"{name} {doc_type} {phase_task}"
 
         full_metadata = {
             "type": "catalog",

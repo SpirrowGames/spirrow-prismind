@@ -445,7 +445,7 @@ class TestAddTask:
         assert result.success is True
         assert result.task_id == "T01"
         assert "追加しました" in result.message
-        mock_sheets_client.append_rows.assert_called_once()
+        mock_sheets_client.safe_append_row.assert_called_once()
 
     def test_add_task_with_extended_fields(self, progress_tools, mock_sheets_client, project_tools):
         """Test task addition with v2 extended fields."""
@@ -472,9 +472,9 @@ class TestAddTask:
         assert result.success is True
         assert result.task_id == "T01"
 
-        # Verify the row data passed to append_rows
-        call_args = mock_sheets_client.append_rows.call_args
-        row = call_args.kwargs["values"][0]
+        # Verify the row data passed to safe_append_row
+        call_args = mock_sheets_client.safe_append_row.call_args
+        row = call_args.kwargs["values"]
         assert row[0] == "Phase 1"  # phase
         assert row[1] == "T01"  # task_id
         assert row[2] == "New Feature Task"  # name
@@ -503,8 +503,8 @@ class TestAddTask:
         )
 
         assert result.success is True
-        call_args = mock_sheets_client.append_rows.call_args
-        row = call_args.kwargs["values"][0]
+        call_args = mock_sheets_client.safe_append_row.call_args
+        row = call_args.kwargs["values"]
         assert row[7] == "medium"  # priority defaults to medium
 
 
