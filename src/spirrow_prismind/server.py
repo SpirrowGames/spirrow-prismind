@@ -893,9 +893,26 @@ TOOLS = [
                     "type": "string",
                     "description": "Notes",
                 },
+                "priority": {
+                    "type": "string",
+                    "description": "New priority (high/medium/low)",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "New category (bug/feature/refactor/design/test)",
+                },
+                "blocked_by": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "New blocked_by task IDs",
+                },
                 "project": {
                     "type": "string",
                     "description": "Project ID",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "User ID for multi-user support",
                 },
             },
             "required": ["task_id", "status", "phase"],
@@ -923,9 +940,26 @@ TOOLS = [
                     "type": "string",
                     "description": "Task description",
                 },
+                "priority": {
+                    "type": "string",
+                    "description": "Task priority (high/medium/low, default: medium)",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Task category (bug/feature/refactor/design/test)",
+                },
+                "blocked_by": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Task IDs this task depends on",
+                },
                 "project": {
                     "type": "string",
                     "description": "Project ID",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "User ID for multi-user support",
                 },
             },
             "required": ["phase", "task_id", "name"],
@@ -2132,7 +2166,11 @@ class PrismindServer:
                 phase=args.get("phase"),
                 blockers=args.get("blockers"),
                 notes=args.get("notes"),
+                priority=args.get("priority"),
+                category=args.get("category"),
+                blocked_by=args.get("blocked_by"),
                 project=args.get("project"),
+                user=args.get("user"),
             )
             return {
                 "success": result.success,
@@ -2145,13 +2183,22 @@ class PrismindServer:
         elif name == "add_task":
             if not self._progress_tools:
                 return {"success": False, "error": "Progress tools not initialized"}
-            result = self._progress_tools.add_task(
-                phase=args["phase"],
-                task_id=args["task_id"],
-                name=args["name"],
-                description=args.get("description", ""),
-                project=args.get("project"),
-            )
+            add_task_kwargs: dict = {
+                "phase": args["phase"],
+                "task_id": args["task_id"],
+                "name": args["name"],
+                "description": args.get("description", ""),
+                "project": args.get("project"),
+                "blocked_by": args.get("blocked_by"),
+                "user": args.get("user"),
+            }
+            # Forward priority/category only when caller supplied them so the
+            # function-level defaults ("medium" / "") still apply.
+            if "priority" in args:
+                add_task_kwargs["priority"] = args["priority"]
+            if "category" in args:
+                add_task_kwargs["category"] = args["category"]
+            result = self._progress_tools.add_task(**add_task_kwargs)
             return {
                 "success": result.success,
                 "project": result.project,
