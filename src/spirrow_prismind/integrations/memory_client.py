@@ -45,6 +45,7 @@ class SessionState:
     """Session state stored in memory."""
     project: str
     user: str
+    author: str = ""
     current_phase: str = ""
     current_task: str = ""
     last_completed: str = ""
@@ -64,6 +65,7 @@ class SessionState:
         return cls(
             project=data.get("project", ""),
             user=data.get("user", ""),
+            author=data.get("author", ""),
             current_phase=data.get("current_phase", ""),
             current_task=data.get("current_task", ""),
             last_completed=data.get("last_completed", ""),
@@ -735,17 +737,27 @@ class MemoryClient:
     # Session State Operations
     # =======================
 
-    def _session_key(self, project: str, user: str) -> str:
-        """Generate session state key."""
+    def _session_key(self, project: str, user: str, author: str = "") -> str:
+        """Generate session state key.
+
+        When ``author`` is empty the legacy key format
+        (``prismind:session:{project}:{user}``) is used so that sessions saved
+        before context-author partitioning remain readable. When ``author`` is
+        given it becomes the last key segment, allowing multiple independent
+        contexts (one per author/role) under the same project+user.
+        """
+        if author:
+            return f"prismind:session:{project}:{user}:{author}"
         return f"prismind:session:{project}:{user}"
 
     def get_session_state(
         self,
         project: str,
         user: str,
+        author: str = "",
     ) -> Optional[SessionState]:
-        """Get session state for a project/user."""
-        key = self._session_key(project, user)
+        """Get session state for a project/user/author."""
+        key = self._session_key(project, user, author)
         entry = self.get(key)
 
         if entry is None or entry.value is None:
@@ -768,7 +780,7 @@ class MemoryClient:
     ) -> MemoryOperationResult:
         """Save session state."""
         state.updated_at = datetime.now().isoformat()
-        key = self._session_key(state.project, state.user)
+        key = self._session_key(state.project, state.user, state.author)
 
         return self.set(key, state.to_dict())
 
@@ -776,9 +788,10 @@ class MemoryClient:
         self,
         project: str,
         user: str,
+        author: str = "",
     ) -> MemoryOperationResult:
         """Delete session state."""
-        key = self._session_key(project, user)
+        key = self._session_key(project, user, author)
         return self.delete(key)
 
     # =============================
@@ -858,26 +871,76 @@ class MemoryClient:
         self,
         user: str,
     ) -> list[SessionState]:
-        """Get all session states for a user across projects."""
+        """Get all session states for a user across projects.
+
+        Filters on the stored ``user`` field rather than the key suffix, since
+        context-author partitioning makes the key end with the author segment
+        instead of the user.
+        """
         all_keys = self.list_keys("prismind:session:")
 
         sessions = []
-        suffix = f":{user}"
-
         for key in all_keys:
-            if key.endswith(suffix):
-                entry = self.get(key)
-                if entry and entry.value:
-                    if isinstance(entry.value, str):
-                        try:
-                            value = json.loads(entry.value)
-                            sessions.append(SessionState.from_dict(value))
-                        except json.JSONDecodeError:
-                            pass
-                    else:
-                        sessions.append(SessionState.from_dict(entry.value))
+            entry = self.get(key)
+            if not (entry and entry.value):
+                continue
+            if isinstance(entry.value, str):
+                try:
+                    value = json.loads(entry.value)
+                except json.JSONDecodeError:
+                    continue
+            else:
+                value = entry.value
+            state = SessionState.from_dict(value)
+            if state.user == user:
+                sessions.append(state)
 
         return sessions
+
+    def list_context_authors(
+        self,
+        project: str,
+        user: str = "",
+    ) -> list[dict[str, Any]]:
+        """List the distinct context authors that have saved state for a project.
+
+        Used to surface which roles/authors already have a persisted context so
+        callers can avoid creating duplicates from naming variations and can
+        verify whether their own author's context exists.
+
+        Args:
+            project: Project to inspect.
+            user: Optional user filter (empty = all users for the project).
+
+        Returns:
+            One dict per distinct author, each with ``author`` (empty string for
+            legacy/default contexts), ``user``, ``updated_at``, ``current_task``
+            and ``current_phase``, sorted most-recently-updated first.
+        """
+        states = self.get_all_sessions_for_project(project)
+        if user:
+            states = [s for s in states if s.user == user]
+
+        # Keep the most recent state per (user, author) pair.
+        by_author: dict[tuple[str, str], SessionState] = {}
+        for state in states:
+            ident = (state.user, state.author)
+            existing = by_author.get(ident)
+            if existing is None or (state.updated_at or "") > (existing.updated_at or ""):
+                by_author[ident] = state
+
+        authors = [
+            {
+                "author": s.author,
+                "user": s.user,
+                "updated_at": s.updated_at,
+                "current_task": s.current_task,
+                "current_phase": s.current_phase,
+            }
+            for s in by_author.values()
+        ]
+        authors.sort(key=lambda a: a["updated_at"] or "", reverse=True)
+        return authors
 
     # =======================
     # Recent Knowledge Cache
