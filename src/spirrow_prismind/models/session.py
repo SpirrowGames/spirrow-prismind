@@ -33,6 +33,9 @@ class SessionContext:
     last_summary: str = ""
     next_action: str = ""
 
+    # Context-author partition this context belongs to ("" = default/legacy)
+    author: str = ""
+
 
 @dataclass
 class SessionState:
@@ -47,6 +50,7 @@ class SessionState:
     notes: str = ""
     last_summary: str = ""
     next_action: str = ""
+    author: str = ""
     updated_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict:
@@ -54,6 +58,7 @@ class SessionState:
         return {
             "project": self.project,
             "user": self.user,
+            "author": self.author,
             "current_phase": self.current_phase,
             "current_task": self.current_task,
             "last_completed": self.last_completed,
@@ -83,6 +88,7 @@ class SessionState:
             notes=data.get("notes", ""),
             last_summary=data.get("last_summary", ""),
             next_action=data.get("next_action", ""),
+            author=data.get("author", ""),
             updated_at=updated_at,
         )
 
@@ -112,6 +118,7 @@ class SessionInfo:
 
     project: str
     user: str
+    author: str = ""
     current_phase: str = ""
     current_task: str = ""
     last_completed: str = ""
@@ -138,4 +145,26 @@ class DeleteSessionResult:
     success: bool
     project: str = ""
     user: str = ""
+    message: str = ""
+
+
+@dataclass
+class ContextAuthor:
+    """A distinct context author that has saved state for a project."""
+
+    author: str = ""
+    user: str = ""
+    current_phase: str = ""
+    current_task: str = ""
+    updated_at: Optional[datetime] = None
+
+
+@dataclass
+class ContextAuthorsResult:
+    """Result of listing the context authors saved for a project."""
+
+    success: bool
+    project: str = ""
+    authors: list[ContextAuthor] = field(default_factory=list)
+    total_count: int = 0
     message: str = ""

@@ -12,6 +12,8 @@ from ..integrations import (
     SessionState,
 )
 from ..models import (
+    ContextAuthor,
+    ContextAuthorsResult,
     DeleteSessionResult,
     DocReference,
     EndSessionResult,
@@ -82,17 +84,20 @@ class SessionTools:
         self,
         project: Optional[str] = None,
         user: Optional[str] = None,
+        author: Optional[str] = None,
     ) -> SessionContext:
         """Start a session and load saved state.
-        
+
         Args:
             project: Project ID (None to use current)
             user: User ID (uses default if None)
-            
+            author: Context author/role partition (empty = default context)
+
         Returns:
             SessionContext with loaded state and recommendations
         """
         user = user or self.user_name
+        author = author or ""
         
         # Get project (from parameter or current)
         if project is None:
@@ -131,7 +136,7 @@ class SessionTools:
             )
         
         # Load session state from Memory
-        session_state = self.memory.get_session_state(project, user)
+        session_state = self.memory.get_session_state(project, user, author)
         
         # Track session
         self._session_start = datetime.now()
@@ -170,6 +175,7 @@ class SessionTools:
             project=project,
             project_name=config.name,
             user=user,
+            author=author,
             started_at=self._session_start,
             current_phase=current_phase,
             current_task=current_task,
@@ -189,6 +195,7 @@ class SessionTools:
         notes: Optional[str] = None,
         project: Optional[str] = None,
         user: Optional[str] = None,
+        author: Optional[str] = None,
     ) -> EndSessionResult:
         """End the session and save state.
 
@@ -204,6 +211,7 @@ class SessionTools:
             EndSessionResult
         """
         user = user or self._current_user or self.user_name
+        author = author or ""
         if project is None or project == "":
             project = self._get_current_project(user)
 
@@ -222,12 +230,13 @@ class SessionTools:
             duration = timedelta(0)
         
         # Load existing state
-        existing_state = self.memory.get_session_state(project, user)
-        
+        existing_state = self.memory.get_session_state(project, user, author)
+
         # Build updated state
         state = SessionState(
             project=project,
             user=user,
+            author=author,
             current_phase=existing_state.current_phase if existing_state else "",
             current_task=existing_state.current_task if existing_state else "",
             last_completed=existing_state.last_completed if existing_state else "",
@@ -273,6 +282,7 @@ class SessionTools:
         current_task: Optional[str] = None,
         project: Optional[str] = None,
         user: Optional[str] = None,
+        author: Optional[str] = None,
     ) -> SaveSessionResult:
         """Save session state without ending.
 
@@ -290,6 +300,7 @@ class SessionTools:
             SaveSessionResult
         """
         user = user or self._current_user or self.user_name
+        author = author or ""
         if project is None or project == "":
             project = self._get_current_project(user)
 
@@ -301,12 +312,13 @@ class SessionTools:
             )
 
         # Load existing state
-        existing_state = self.memory.get_session_state(project, user)
+        existing_state = self.memory.get_session_state(project, user, author)
 
         # Build updated state
         state = SessionState(
             project=project,
             user=user,
+            author=author,
             current_phase=current_phase if current_phase is not None else (existing_state.current_phase if existing_state else ""),
             current_task=current_task if current_task is not None else (existing_state.current_task if existing_state else ""),
             last_completed=existing_state.last_completed if existing_state else "",
@@ -343,6 +355,7 @@ class SessionTools:
         blockers: Optional[list[str]] = None,
         project: Optional[str] = None,
         user: Optional[str] = None,
+        author: Optional[str] = None,
     ) -> SaveSessionResult:
         """Update progress in the session.
 
@@ -358,6 +371,7 @@ class SessionTools:
             SaveSessionResult
         """
         user = user or self._current_user or self.user_name
+        author = author or ""
         if project is None or project == "":
             project = self._get_current_project(user)
 
@@ -369,14 +383,15 @@ class SessionTools:
             )
 
         # Load existing state
-        existing_state = self.memory.get_session_state(project, user)
-        
+        existing_state = self.memory.get_session_state(project, user, author)
+
         # Build updated state
         last_completed = completed_task if completed_task else (existing_state.last_completed if existing_state else "")
-        
+
         state = SessionState(
             project=project,
             user=user,
+            author=author,
             current_phase=current_phase if current_phase is not None else (existing_state.current_phase if existing_state else ""),
             current_task=current_task if current_task is not None else (existing_state.current_task if existing_state else ""),
             last_completed=last_completed,
@@ -691,6 +706,7 @@ class SessionTools:
                 sessions.append(SessionInfo(
                     project=state.project,
                     user=state.user,
+                    author=state.author,
                     current_phase=state.current_phase,
                     current_task=state.current_task,
                     last_completed=state.last_completed,
@@ -724,17 +740,20 @@ class SessionTools:
         self,
         project: str,
         user: Optional[str] = None,
+        author: Optional[str] = None,
     ) -> DeleteSessionResult:
         """Delete a saved session.
 
         Args:
             project: Project ID of the session to delete
             user: User ID (uses default if None)
+            author: Context author/role partition (empty = default context)
 
         Returns:
             DeleteSessionResult
         """
         user = user or self.user_name
+        author = author or ""
 
         if not project:
             return DeleteSessionResult(
@@ -744,17 +763,17 @@ class SessionTools:
 
         try:
             # Check if session exists
-            existing = self.memory.get_session_state(project, user)
+            existing = self.memory.get_session_state(project, user, author)
             if not existing:
                 return DeleteSessionResult(
                     success=False,
                     project=project,
                     user=user,
-                    message=f"セッションが見つかりません: project={project}, user={user}",
+                    message=f"セッションが見つかりません: project={project}, user={user}, author={author or '(default)'}",
                 )
 
             # Delete the session
-            result = self.memory.delete_session_state(project, user)
+            result = self.memory.delete_session_state(project, user, author)
 
             if result.success:
                 return DeleteSessionResult(
@@ -778,4 +797,64 @@ class SessionTools:
                 project=project,
                 user=user,
                 message=f"セッションの削除に失敗しました: {e}",
+            )
+
+    def list_context_authors(
+        self,
+        project: str,
+        user: Optional[str] = None,
+    ) -> ContextAuthorsResult:
+        """List the distinct context authors saved for a project.
+
+        Surfaces which authors/roles already have a persisted context so the
+        caller can avoid duplicates from naming variations and can verify
+        whether their own author's context exists.
+
+        Args:
+            project: Project to inspect.
+            user: Optional user filter (None = all users for the project).
+
+        Returns:
+            ContextAuthorsResult sorted most-recently-updated first.
+        """
+        if not project:
+            return ContextAuthorsResult(
+                success=False,
+                message="プロジェクトIDが指定されていません。",
+            )
+
+        try:
+            raw = self.memory.list_context_authors(project, user or "")
+            authors = []
+            for entry in raw:
+                updated_at = None
+                value = entry.get("updated_at")
+                if isinstance(value, str) and value:
+                    try:
+                        updated_at = datetime.fromisoformat(value)
+                    except ValueError:
+                        pass
+                elif isinstance(value, datetime):
+                    updated_at = value
+                authors.append(ContextAuthor(
+                    author=entry.get("author", ""),
+                    user=entry.get("user", ""),
+                    current_phase=entry.get("current_phase", ""),
+                    current_task=entry.get("current_task", ""),
+                    updated_at=updated_at,
+                ))
+
+            return ContextAuthorsResult(
+                success=True,
+                project=project,
+                authors=authors,
+                total_count=len(authors),
+                message=f"{len(authors)}件のコンテキストauthorが見つかりました。",
+            )
+        except Exception as e:
+            logger.error(f"Failed to list context authors: {e}")
+            return ContextAuthorsResult(
+                success=False,
+                project=project,
+                message=f"コンテキストauthor一覧の取得に失敗しました: {e}",
             )

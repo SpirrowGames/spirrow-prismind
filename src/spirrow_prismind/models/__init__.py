@@ -51,6 +51,8 @@ from .project import (
     UpdateProjectResult,
 )
 from .session import (
+    ContextAuthor,
+    ContextAuthorsResult,
     DeleteSessionResult,
     EndSessionResult,
     ListSessionsResult,
@@ -131,6 +133,8 @@ __all__ = [
     "SyncProjectsResult",
     "UpdateProjectResult",
     # Session
+    "ContextAuthor",
+    "ContextAuthorsResult",
     "EndSessionResult",
     "SaveSessionResult",
     "SessionContext",

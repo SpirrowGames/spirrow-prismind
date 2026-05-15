@@ -113,13 +113,17 @@ TOOLS = [
     # Session Management
     Tool(
         name="start_session",
-        description="Start a session and load saved state. Uses current project if project is not specified.",
+        description="Start a session and load saved state. Uses current project if project is not specified. Specify 'author' to restore a specific context-author/role partition.",
         inputSchema={
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
                     "description": "Project ID (uses current project if omitted)",
+                },
+                "author": {
+                    "type": "string",
+                    "description": "Context author/role partition to restore (omit for the default context)",
                 },
             },
         },
@@ -150,6 +154,10 @@ TOOLS = [
                 "project": {
                     "type": "string",
                     "description": "Project ID (uses current project if omitted)",
+                },
+                "author": {
+                    "type": "string",
+                    "description": "Context author/role partition (omit for the default context)",
                 },
             },
         },
@@ -189,6 +197,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Project ID (uses current project if omitted)",
                 },
+                "author": {
+                    "type": "string",
+                    "description": "Context author/role partition (omit for the default context)",
+                },
             },
         },
     ),
@@ -218,6 +230,10 @@ TOOLS = [
                 "project": {
                     "type": "string",
                     "description": "Project ID (uses current project if omitted)",
+                },
+                "author": {
+                    "type": "string",
+                    "description": "Context author/role partition (omit for the default context)",
                 },
             },
         },
@@ -252,6 +268,28 @@ TOOLS = [
                 "user": {
                     "type": "string",
                     "description": "User ID (uses current user if omitted)",
+                },
+                "author": {
+                    "type": "string",
+                    "description": "Context author/role partition to delete (omit for the default context)",
+                },
+            },
+            "required": ["project"],
+        },
+    ),
+    Tool(
+        name="list_context_authors",
+        description="List the distinct context authors/roles that have saved session state for a project. Use this to avoid creating duplicate contexts from naming variations and to check whether your own author's context already exists.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project ID to inspect",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "Optional user filter (omit for all users on the project)",
                 },
             },
             "required": ["project"],
@@ -1598,7 +1636,7 @@ class PrismindServer:
         # Check if required tools are initialized
         google_required_tools = [
             "start_session", "end_session", "save_session", "update_session_progress",
-            "list_sessions", "delete_session", "update_summary",
+            "list_sessions", "delete_session", "list_context_authors", "update_summary",
             "setup_project", "switch_project", "list_projects",
             "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
@@ -1620,11 +1658,13 @@ class PrismindServer:
         if name == "start_session":
             result = self._session_tools.start_session(
                 project=args.get("project"),
+                author=args.get("author"),
             )
             return {
                 "success": True,
                 "project": result.project,
                 "project_name": result.project_name,
+                "author": result.author,
                 "current_phase": result.current_phase,
                 "current_task": result.current_task,
                 "last_completed": result.last_completed,
@@ -1645,6 +1685,7 @@ class PrismindServer:
                 blockers=args.get("blockers"),
                 notes=args.get("notes"),
                 project=args.get("project"),
+                author=args.get("author"),
             )
             return {
                 "success": result.success,
@@ -1662,6 +1703,7 @@ class PrismindServer:
                 current_phase=args.get("current_phase"),
                 current_task=args.get("current_task"),
                 project=args.get("project"),
+                author=args.get("author"),
             )
             return {
                 "success": result.success,
@@ -1676,6 +1718,7 @@ class PrismindServer:
                 completed_task=args.get("completed_task"),
                 blockers=args.get("blockers"),
                 project=args.get("project"),
+                author=args.get("author"),
             )
             return {
                 "success": result.success,
@@ -1694,6 +1737,7 @@ class PrismindServer:
                     {
                         "project": s.project,
                         "user": s.user,
+                        "author": s.author,
                         "current_phase": s.current_phase,
                         "current_task": s.current_task,
                         "last_completed": s.last_completed,
@@ -1712,11 +1756,34 @@ class PrismindServer:
             result = self._session_tools.delete_session(
                 project=args["project"],
                 user=args.get("user"),
+                author=args.get("author"),
             )
             return {
                 "success": result.success,
                 "project": result.project,
                 "user": result.user,
+                "message": result.message,
+            }
+
+        elif name == "list_context_authors":
+            result = self._session_tools.list_context_authors(
+                project=args["project"],
+                user=args.get("user"),
+            )
+            return {
+                "success": result.success,
+                "project": result.project,
+                "authors": [
+                    {
+                        "author": a.author,
+                        "user": a.user,
+                        "current_phase": a.current_phase,
+                        "current_task": a.current_task,
+                        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+                    }
+                    for a in result.authors
+                ],
+                "total_count": result.total_count,
                 "message": result.message,
             }
 

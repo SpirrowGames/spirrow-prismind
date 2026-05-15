@@ -105,17 +105,20 @@ class MockMemoryClient(MemoryClient):
     # Session State Operations
     # =======================
 
-    def _session_key(self, project: str, user: str) -> str:
-        """Generate session state key."""
+    def _session_key(self, project: str, user: str, author: str = "") -> str:
+        """Generate session state key (author = optional last segment)."""
+        if author:
+            return f"prismind:session:{project}:{user}:{author}"
         return f"prismind:session:{project}:{user}"
 
     def get_session_state(
         self,
         project: str,
         user: str,
+        author: str = "",
     ) -> Optional[SessionState]:
-        """Get session state for a project/user."""
-        key = self._session_key(project, user)
+        """Get session state for a project/user/author."""
+        key = self._session_key(project, user, author)
         entry = self.get(key)
 
         if entry is None or entry.value is None:
@@ -129,7 +132,7 @@ class MockMemoryClient(MemoryClient):
     ) -> MemoryOperationResult:
         """Save session state."""
         state.updated_at = datetime.now().isoformat()
-        key = self._session_key(state.project, state.user)
+        key = self._session_key(state.project, state.user, state.author)
 
         return self.set(key, state.to_dict())
 
@@ -137,9 +140,10 @@ class MockMemoryClient(MemoryClient):
         self,
         project: str,
         user: str,
+        author: str = "",
     ) -> MemoryOperationResult:
         """Delete session state."""
-        key = self._session_key(project, user)
+        key = self._session_key(project, user, author)
         return self.delete(key)
 
     # =============================
@@ -207,15 +211,45 @@ class MockMemoryClient(MemoryClient):
         all_keys = self.list_keys("prismind:session:")
 
         sessions = []
-        suffix = f":{user}"
-
         for key in all_keys:
-            if key.endswith(suffix):
-                entry = self.get(key)
-                if entry and entry.value:
-                    sessions.append(SessionState.from_dict(entry.value))
+            entry = self.get(key)
+            if not (entry and entry.value):
+                continue
+            state = SessionState.from_dict(entry.value)
+            if state.user == user:
+                sessions.append(state)
 
         return sessions
+
+    def list_context_authors(
+        self,
+        project: str,
+        user: str = "",
+    ) -> list[dict]:
+        """List the distinct context authors saved for a project."""
+        states = self.get_all_sessions_for_project(project)
+        if user:
+            states = [s for s in states if s.user == user]
+
+        by_author: dict[tuple, SessionState] = {}
+        for state in states:
+            ident = (state.user, state.author)
+            existing = by_author.get(ident)
+            if existing is None or (state.updated_at or "") > (existing.updated_at or ""):
+                by_author[ident] = state
+
+        authors = [
+            {
+                "author": s.author,
+                "user": s.user,
+                "updated_at": s.updated_at,
+                "current_task": s.current_task,
+                "current_phase": s.current_phase,
+            }
+            for s in by_author.values()
+        ]
+        authors.sort(key=lambda a: a["updated_at"] or "", reverse=True)
+        return authors
 
     # =======================
     # Test Helpers

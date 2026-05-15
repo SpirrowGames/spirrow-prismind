@@ -732,3 +732,90 @@ class TestDeleteSession:
         list_result = session_tools.list_sessions()
         assert list_result.total_count == 1
         assert list_result.sessions[0].project == "cleanup_b"
+
+
+class TestContextAuthorPartition:
+    """Tests for context-author partitioning of session state."""
+
+    def _setup(self, project_tools, project):
+        project_tools.setup_project(
+            project=project,
+            name=f"{project} name",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+    def test_authors_have_isolated_contexts(self, session_tools, project_tools):
+        """Different authors save independent contexts under the same project."""
+        self._setup(project_tools, "ap_proj")
+
+        session_tools.save_session(
+            project="ap_proj", summary="architect work",
+            current_task="T-arch", author="claude.ai",
+        )
+        session_tools.save_session(
+            project="ap_proj", summary="impl work",
+            current_task="T-impl", author="claude-code",
+        )
+
+        arch = session_tools.start_session(project="ap_proj", author="claude.ai")
+        impl = session_tools.start_session(project="ap_proj", author="claude-code")
+
+        assert arch.author == "claude.ai"
+        assert arch.current_task == "T-arch"
+        assert arch.last_summary == "architect work"
+        assert impl.author == "claude-code"
+        assert impl.current_task == "T-impl"
+        assert impl.last_summary == "impl work"
+
+    def test_empty_author_keeps_legacy_context(self, session_tools, project_tools, mock_memory_client):
+        """A no-author save uses the legacy key and is not seen by authored reads."""
+        self._setup(project_tools, "legacy_proj")
+
+        session_tools.save_session(
+            project="legacy_proj", summary="legacy", current_task="T-legacy",
+        )
+
+        # Legacy key format preserved (no trailing author segment)
+        assert mock_memory_client.get("prismind:session:legacy_proj:test_user") is not None
+
+        default_ctx = session_tools.start_session(project="legacy_proj")
+        assert default_ctx.current_task == "T-legacy"
+        assert default_ctx.author == ""
+
+        # An authored read does not pick up the legacy context
+        authored = session_tools.start_session(project="legacy_proj", author="claude.ai")
+        assert authored.current_task == ""
+
+    def test_list_context_authors(self, session_tools, project_tools):
+        """list_context_authors returns the distinct authors saved for a project."""
+        self._setup(project_tools, "lca_proj")
+
+        session_tools.save_session(project="lca_proj", summary="a", author="claude.ai")
+        session_tools.save_session(project="lca_proj", summary="b", author="claude-code")
+        session_tools.save_session(project="lca_proj", summary="c")  # default/legacy
+
+        result = session_tools.list_context_authors(project="lca_proj")
+
+        assert result.success is True
+        assert result.total_count == 3
+        authors = {a.author for a in result.authors}
+        assert authors == {"claude.ai", "claude-code", ""}
+
+    def test_list_context_authors_requires_project(self, session_tools):
+        """list_context_authors fails fast without a project."""
+        result = session_tools.list_context_authors(project="")
+        assert result.success is False
+
+    def test_delete_session_targets_author(self, session_tools, project_tools):
+        """delete_session removes only the targeted author's context."""
+        self._setup(project_tools, "del_proj")
+        session_tools.save_session(project="del_proj", summary="a", author="claude.ai")
+        session_tools.save_session(project="del_proj", summary="b", author="claude-code")
+
+        session_tools.delete_session(project="del_proj", author="claude.ai")
+
+        remaining = {a.author for a in session_tools.list_context_authors(project="del_proj").authors}
+        assert remaining == {"claude-code"}
