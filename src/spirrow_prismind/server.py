@@ -1766,9 +1766,13 @@ class PrismindServer:
             }
 
         elif name == "list_context_authors":
+            # NOTE: like start/save/end_session, this dispatch does not thread
+            # the caller-supplied user — session state is keyed under
+            # Prismind's default user, so filtering by a Magickit-supplied
+            # user would never match. Threading user consistently across all
+            # session tools is a separate, backward-compat-sensitive change.
             result = self._session_tools.list_context_authors(
                 project=args["project"],
-                user=args.get("user"),
             )
             return {
                 "success": result.success,
