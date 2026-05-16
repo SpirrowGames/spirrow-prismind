@@ -128,7 +128,9 @@ default_user = "default"
 - 目録: `doc_id="catalog:{project}:{doc_id}"`, `metadata.type="catalog"`
 
 ### Memoryキー
-- セッション状態: `"prismind:session:{project}:{user}"`
+- セッション状態: `"prismind:session:{project}:{user}"`（デフォルト/レガシー）
+  - コンテキスト author 分割時: `"prismind:session:{project}:{user}:{author}"`
+  - `author` 空は従来キー形式を維持（後方互換）。保存済み author は `list_context_authors` で取得可能
 - 現在プロジェクト: `"prismind:current_project:{user}"`
 
 ### Google Sheets構成（プロジェクトごと）

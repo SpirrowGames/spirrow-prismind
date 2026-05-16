@@ -99,6 +99,13 @@ Claude Codeの設定に追加:
 | `save_session` | セッションの中間保存 |
 | `list_sessions` | プロジェクトの全セッションを一覧表示 |
 | `delete_session` | 特定のセッションを削除 |
+| `list_context_authors` | プロジェクトに保存済みのコンテキスト author（ロール）一覧 |
+
+`start_session` / `end_session` / `save_session` / `delete_session` は任意の
+`author` 引数を受け取ります。セッションキーに分割セグメントを追加し
+（`prismind:session:{project}:{user}:{author}`）、1つの project+user に対し
+author（ロール）ごとに独立したコンテキストを保持できます。`author` 空の場合は
+従来のキー形式を維持します（後方互換）。
 
 ### プロジェクト管理
 | ツール | 説明 |

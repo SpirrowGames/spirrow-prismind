@@ -99,6 +99,13 @@ Add to your Claude Code settings:
 | `save_session` | Save intermediate session state |
 | `list_sessions` | List all sessions for a project |
 | `delete_session` | Delete a specific session |
+| `list_context_authors` | List the distinct context authors/roles saved for a project |
+
+`start_session` / `end_session` / `save_session` / `delete_session` accept an
+optional `author` argument. It adds a partition segment to the session key
+(`prismind:session:{project}:{user}:{author}`), so one project+user can hold
+multiple independent contexts — one per author/role. An empty `author` keeps
+the legacy key for backward compatibility.
 
 ### Project Management
 | Tool | Description |

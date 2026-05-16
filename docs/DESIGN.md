@@ -168,7 +168,7 @@ default_user = "default"
 | 進捗状態（Phase、タスク） | Google Sheets | 構造化データ、一覧性 |
 | 技術知見（解決パターン） | RAG | セマンティック検索 |
 | プロジェクト設定 | RAG | 複数プロジェクト対応、共有可能 |
-| セッション状態 | MCP Memory Server | 軽量、頻繁更新、開発者ごと |
+| セッション状態 | MCP Memory Server | 軽量、頻繁更新、開発者・author(ロール)ごとに分割 |
 | 目録（マスター） | Google Sheets | 人間も確認できる |
 | 目録（キャッシュ） | RAG | 高速検索用 |
 
