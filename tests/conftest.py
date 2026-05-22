@@ -68,6 +68,11 @@ def mock_drive_client():
     mock = MagicMock()
     mock.create_folder_structure.return_value = {}
     mock.list_files.return_value = []
+    # Default to a native Google Doc so update_document takes the Docs API path.
+    # Non-native (e.g. text/markdown) tests override get_file_info explicitly.
+    mock.get_file_info.return_value = MagicMock(
+        mime_type="application/vnd.google-apps.document"
+    )
     return mock
 
 

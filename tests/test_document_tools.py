@@ -389,6 +389,104 @@ class TestUpdateDocument:
         mock_docs_client.append_text.assert_called_once()
 
 
+class TestUpdateDocumentNonNative:
+    """Tests for update_document on non-native (text/markdown, text/plain) files.
+
+    These files are not accepted by the Google Docs API (HTTP 400), so the
+    content must be replaced via a Drive media upload while keeping the doc_id.
+    """
+
+    def _setup_catalog(self, project_tools, mock_rag_client, project, doc_id):
+        project_tools.setup_project(
+            project=project,
+            name=project,
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        mock_rag_client.add_catalog_entry(
+            doc_id=doc_id,
+            name=doc_id,
+            doc_type="adr",
+            project=project,
+            phase_task="P1-T01",
+            metadata={},
+        )
+
+    def test_markdown_replace_uses_drive_media_upload(
+        self, document_tools, mock_docs_client, mock_drive_client,
+        mock_rag_client, project_tools
+    ):
+        """text/markdown replace -> Drive media upload, not Docs API."""
+        self._setup_catalog(project_tools, mock_rag_client, "md_proj", "md_doc")
+        mock_drive_client.get_file_info.return_value = MockFileInfo(
+            file_id="md_doc", name="ADR-06", mime_type="text/markdown"
+        )
+
+        result = document_tools.update_document(
+            doc_id="md_doc",
+            content="# ADR-06 v2.1\n\nfull body",
+            append=False,
+        )
+
+        assert result.success is True
+        assert "content" in result.updated_fields
+        # Docs API must NOT be touched for a non-native file
+        mock_docs_client.replace_all_text.assert_not_called()
+        mock_docs_client.append_text.assert_not_called()
+        # Drive media upload with the same doc_id and preserved mimeType
+        mock_drive_client.update_file_content.assert_called_once_with(
+            "md_doc", "# ADR-06 v2.1\n\nfull body", mime_type="text/markdown"
+        )
+
+    def test_markdown_append_downloads_and_concatenates(
+        self, document_tools, mock_docs_client, mock_drive_client,
+        mock_rag_client, project_tools
+    ):
+        """text/markdown append -> download existing + concat, then media upload."""
+        self._setup_catalog(project_tools, mock_rag_client, "md_ap", "md_ap_doc")
+        mock_drive_client.get_file_info.return_value = MockFileInfo(
+            file_id="md_ap_doc", name="notes", mime_type="text/markdown"
+        )
+        mock_drive_client.download_file_content.return_value = b"existing\n"
+
+        result = document_tools.update_document(
+            doc_id="md_ap_doc",
+            content="appended",
+            append=True,
+        )
+
+        assert result.success is True
+        mock_drive_client.download_file_content.assert_called_once_with("md_ap_doc")
+        mock_drive_client.update_file_content.assert_called_once_with(
+            "md_ap_doc", "existing\nappended", mime_type="text/markdown"
+        )
+        mock_docs_client.append_text.assert_not_called()
+
+    def test_unsupported_native_type_fails_cleanly(
+        self, document_tools, mock_docs_client, mock_drive_client,
+        mock_rag_client, project_tools
+    ):
+        """A native Sheet/Slide is rejected with no partial write."""
+        self._setup_catalog(project_tools, mock_rag_client, "sheet_proj", "sheet_doc")
+        mock_drive_client.get_file_info.return_value = MockFileInfo(
+            file_id="sheet_doc", name="data",
+            mime_type="application/vnd.google-apps.spreadsheet",
+        )
+
+        result = document_tools.update_document(
+            doc_id="sheet_doc",
+            content="should not be written",
+            append=False,
+        )
+
+        assert result.success is False
+        assert "content" not in result.updated_fields
+        mock_docs_client.replace_all_text.assert_not_called()
+        mock_drive_client.update_file_content.assert_not_called()
+
+
 class TestGenerateKeywords:
     """Tests for _generate_keywords method."""
 

@@ -8,6 +8,7 @@ from typing import Optional
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaInMemoryUpload
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,79 @@ class GoogleDriveClient:
             )
         except HttpError as e:
             logger.error(f"Failed to get file info for '{file_id}': {e}")
+            raise
+
+    def download_file_content(self, file_id: str) -> bytes:
+        """Download the raw byte content of a non-Google-native file.
+
+        Works for binary / text files (e.g. text/markdown, text/plain) via
+        the Drive ``files.get_media`` endpoint. Does NOT work for native
+        Google types (Docs/Sheets/Slides), which require ``files.export``.
+
+        Args:
+            file_id: The file ID
+
+        Returns:
+            Raw file content as bytes
+
+        Raises:
+            HttpError: If the API request fails
+        """
+        try:
+            return self.service.files().get_media(fileId=file_id).execute()
+        except HttpError as e:
+            logger.error(f"Failed to download content for '{file_id}': {e}")
+            raise
+
+    def update_file_content(
+        self,
+        file_id: str,
+        content: str,
+        mime_type: Optional[str] = None,
+    ) -> FileInfo:
+        """Replace the byte content of an existing file via media upload.
+
+        Updates the file body in place with ``files.update`` (media upload),
+        preserving the file's ID, name, parents and mimeType. This is the
+        correct path for non-Google-native files such as ``text/markdown`` /
+        ``text/plain``; the Google Docs API only accepts native
+        ``application/vnd.google-apps.document`` files.
+
+        Args:
+            file_id: The file ID to update
+            content: New full content (encoded as UTF-8)
+            mime_type: Content type for the upload. Defaults to text/plain.
+                Pass the file's existing mimeType so it stays unchanged.
+
+        Returns:
+            Updated FileInfo
+
+        Raises:
+            HttpError: If the API request fails
+        """
+        try:
+            media = MediaInMemoryUpload(
+                content.encode("utf-8"),
+                mimetype=mime_type or "text/plain",
+                resumable=False,
+            )
+            updated_file = self.service.files().update(
+                fileId=file_id,
+                media_body=media,
+                fields="id, name, mimeType, parents, webViewLink, createdTime, modifiedTime",
+            ).execute()
+
+            return FileInfo(
+                file_id=updated_file.get("id", ""),
+                name=updated_file.get("name", ""),
+                mime_type=updated_file.get("mimeType", ""),
+                parents=updated_file.get("parents", []),
+                web_view_link=updated_file.get("webViewLink", ""),
+                created_time=updated_file.get("createdTime", ""),
+                modified_time=updated_file.get("modifiedTime", ""),
+            )
+        except HttpError as e:
+            logger.error(f"Failed to update content for '{file_id}': {e}")
             raise
 
     def move_file(
