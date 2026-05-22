@@ -421,12 +421,68 @@ class DocumentTools:
         updated_fields = []
 
         try:
-            # Update content if provided
+            # Update content if provided.
+            # Branch on the file's mimeType: native Google Docs are edited via
+            # the Docs API (structured body), but non-native text files such as
+            # text/markdown / text/plain are not accepted by the Docs API
+            # (HTTP 400) and must be replaced via a Drive media upload, which
+            # keeps the same doc_id (fileId).
             if content is not None:
-                if append:
-                    self.docs.append_text(doc_id, content)
+                native_doc = "application/vnd.google-apps.document"
+                native_prefix = "application/vnd.google-apps."
+
+                try:
+                    file_mime = self.drive.get_file_info(doc_id).mime_type
+                except Exception as e:
+                    # Could not determine mimeType -> fall back to the legacy
+                    # Docs API path (preserves prior behavior for native docs).
+                    logger.warning(
+                        f"Could not determine mimeType for '{doc_id}', "
+                        f"assuming native Google Doc: {e}"
+                    )
+                    file_mime = native_doc
+
+                if file_mime == native_doc:
+                    # Native Google Doc -> Docs API (structured edit)
+                    if append:
+                        self.docs.append_text(doc_id, content)
+                    else:
+                        self.docs.replace_all_text(doc_id, content)
+                elif file_mime.startswith(native_prefix):
+                    # Other Google-native type (Sheets/Slides/...) is not
+                    # supported by this text-oriented update path. Fail cleanly
+                    # without any partial write.
+                    return UpdateDocumentResult(
+                        success=False,
+                        doc_id=doc_id,
+                        updated_fields=updated_fields,
+                        message=(
+                            f"このドキュメント (mimeType: {file_mime}) は "
+                            "smart_update_document のテキスト更新に対応していません。"
+                            "対応するのは native Google Docs および "
+                            "text/markdown・text/plain 等の非ネイティブテキストのみです。"
+                        ),
+                    )
                 else:
-                    self.docs.replace_all_text(doc_id, content)
+                    # Non-native file (text/markdown, text/plain, ...) ->
+                    # Drive media upload (full byte replacement, doc_id kept).
+                    if append:
+                        try:
+                            existing_text = self.drive.download_file_content(
+                                doc_id
+                            ).decode("utf-8")
+                        except Exception as e:
+                            logger.warning(
+                                f"Append download failed for '{doc_id}', "
+                                f"treating existing content as empty: {e}"
+                            )
+                            existing_text = ""
+                        new_content = existing_text + content
+                    else:
+                        new_content = content
+                    self.drive.update_file_content(
+                        doc_id, new_content, mime_type=file_mime
+                    )
                 updated_fields.append("content")
 
             # Handle doc_type change - move file to new folder
