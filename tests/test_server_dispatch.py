@@ -186,6 +186,136 @@ class TestUpdateTaskStatusInputSchema:
             )
 
 
+class TestUpsertIdentityDispatch:
+    """Verify upsert_identity dispatch forwards all fields and shapes the response."""
+
+    def test_dispatch_forwards_fields_and_returns_identity(self):
+        from spirrow_prismind.models import IdentityInfo, UpsertIdentityResult
+
+        server = PrismindServer()
+        server._initialized = True
+        server._project_tools = MagicMock()
+        session = MagicMock()
+        server._session_tools = session
+
+        identity = IdentityInfo(
+            identity_name="ident-1",
+            user="test_user",
+            display_name="Test",
+            allowed_roles=["proposer", "reviewer"],
+            default_role="proposer",
+            notes="hi",
+            created_at="2026-05-28T00:00:00",
+            updated_at="2026-05-28T00:00:01",
+        )
+        session.upsert_identity.return_value = UpsertIdentityResult(
+            success=True, identity=identity, created=True, message="ok",
+        )
+
+        result = asyncio.run(
+            server._dispatch_tool(
+                "upsert_identity",
+                {
+                    "identity_name": "ident-1",
+                    "allowed_roles": ["proposer", "reviewer"],
+                    "default_role": "proposer",
+                    "display_name": "Test",
+                    "notes": "hi",
+                    "user": "test_user",
+                },
+            )
+        )
+
+        session.upsert_identity.assert_called_once()
+        kwargs = session.upsert_identity.call_args.kwargs
+        for field in (
+            "identity_name", "allowed_roles", "default_role",
+            "display_name", "notes", "user",
+        ):
+            assert field in kwargs, f"upsert_identity dispatch dropped {field!r}"
+
+        assert result["success"] is True
+        assert result["created"] is True
+        assert result["identity"]["identity_name"] == "ident-1"
+        assert result["identity"]["allowed_roles"] == ["proposer", "reviewer"]
+
+    def test_input_schema_declares_required_and_optional_fields(self):
+        schema = _tool_schema("upsert_identity")
+        properties = schema.get("properties", {})
+        for field in (
+            "identity_name", "allowed_roles", "default_role",
+            "display_name", "notes", "user",
+        ):
+            assert field in properties, (
+                f"upsert_identity input schema must declare {field!r}. "
+                f"Current schema lists {sorted(properties.keys())}."
+            )
+        assert schema.get("required") == ["identity_name"]
+
+
+class TestListContextAuthorsDispatchIdentity:
+    """list_context_authors response must surface the joined identity field."""
+
+    def test_response_includes_identity_field(self):
+        from datetime import datetime
+
+        from spirrow_prismind.models import (
+            ContextAuthor,
+            ContextAuthorsResult,
+            IdentityInfo,
+        )
+
+        server = PrismindServer()
+        server._initialized = True
+        server._project_tools = MagicMock()
+        session = MagicMock()
+        server._session_tools = session
+
+        identity = IdentityInfo(
+            identity_name="ident-1",
+            user="u",
+            display_name="Disp",
+            allowed_roles=["proposer"],
+            default_role="proposer",
+        )
+        session.list_context_authors.return_value = ContextAuthorsResult(
+            success=True,
+            project="p1",
+            authors=[
+                ContextAuthor(
+                    author="ident-1",
+                    user="u",
+                    current_phase="P1",
+                    current_task="T1",
+                    updated_at=datetime(2026, 5, 28, 0, 0, 0),
+                    identity=identity,
+                ),
+                ContextAuthor(
+                    author="other",
+                    user="u",
+                    updated_at=datetime(2026, 5, 27, 0, 0, 0),
+                    identity=None,
+                ),
+            ],
+            total_count=2,
+            message="",
+        )
+
+        result = asyncio.run(
+            server._dispatch_tool("list_context_authors", {"project": "p1"})
+        )
+
+        assert result["success"] is True
+        assert len(result["authors"]) == 2
+        with_ident = result["authors"][0]
+        assert with_ident["identity"] is not None
+        assert with_ident["identity"]["allowed_roles"] == ["proposer"]
+        assert with_ident["identity"]["default_role"] == "proposer"
+
+        without_ident = result["authors"][1]
+        assert without_ident["identity"] is None
+
+
 class TestUpdateTaskDispatchUnaffected:
     """Sanity: update_task dispatch was already correct — pin the behavior."""
 

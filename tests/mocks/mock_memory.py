@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from spirrow_prismind.integrations.memory_client import (
     CurrentProject,
+    Identity,
     MemoryClient,
     MemoryEntry,
     MemoryOperationResult,
@@ -221,6 +222,46 @@ class MockMemoryClient(MemoryClient):
 
         return sessions
 
+    # =======================
+    # Identity Operations
+    # =======================
+
+    def _identity_key(self, user: str, identity_name: str) -> str:
+        return f"prismind:identity:{user}:{identity_name}"
+
+    def get_identity(self, user: str, identity_name: str) -> Optional[Identity]:
+        if not user or not identity_name:
+            return None
+        entry = self.get(self._identity_key(user, identity_name))
+        if entry is None or entry.value is None:
+            return None
+        return Identity.from_dict(entry.value)
+
+    def save_identity(self, identity: Identity) -> MemoryOperationResult:
+        if not identity.user or not identity.identity_name:
+            return MemoryOperationResult(
+                success=False, key="",
+                message="identity.user and identity.identity_name are required",
+            )
+        now = datetime.now().isoformat()
+        if not identity.created_at:
+            existing = self.get_identity(identity.user, identity.identity_name)
+            identity.created_at = existing.created_at if existing and existing.created_at else now
+        identity.updated_at = now
+        return self.set(self._identity_key(identity.user, identity.identity_name), identity.to_dict())
+
+    def delete_identity(self, user: str, identity_name: str) -> MemoryOperationResult:
+        return self.delete(self._identity_key(user, identity_name))
+
+    def list_identities(self, user: str = "") -> list[Identity]:
+        prefix = f"prismind:identity:{user}:" if user else "prismind:identity:"
+        out: list[Identity] = []
+        for key in self.list_keys(prefix):
+            entry = self.get(key)
+            if entry and entry.value:
+                out.append(Identity.from_dict(entry.value))
+        return out
+
     def list_context_authors(
         self,
         project: str,
@@ -238,16 +279,21 @@ class MockMemoryClient(MemoryClient):
             if existing is None or (state.updated_at or "") > (existing.updated_at or ""):
                 by_author[ident] = state
 
-        authors = [
-            {
+        authors: list[dict] = []
+        for s in by_author.values():
+            entry: dict = {
                 "author": s.author,
                 "user": s.user,
                 "updated_at": s.updated_at,
                 "current_task": s.current_task,
                 "current_phase": s.current_phase,
+                "identity": None,
             }
-            for s in by_author.values()
-        ]
+            if s.author and s.user:
+                ident_record = self.get_identity(s.user, s.author)
+                if ident_record is not None:
+                    entry["identity"] = ident_record.to_dict()
+            authors.append(entry)
         authors.sort(key=lambda a: a["updated_at"] or "", reverse=True)
         return authors
 
