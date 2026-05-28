@@ -96,6 +96,51 @@ class CurrentProject:
         )
 
 
+@dataclass
+class Identity:
+    """Stable, cross-project identity record for an actor (e.g. an AI role).
+
+    Identity is a separate key space from SessionState so that
+    role / allowed_roles travel with the actor rather than per-context, and
+    the same identity can hold contexts under multiple projects without
+    duplicating the role declaration on each save.
+
+    The persisted key is ``prismind:identity:{user}:{identity_name}``.
+    ``identity_name`` is the same string that ``SessionState.author`` uses,
+    which lets ``list_context_authors`` join identity onto each author entry.
+    """
+
+    identity_name: str
+    user: str
+    display_name: str = ""
+    allowed_roles: list[str] = field(default_factory=list)
+    default_role: str = ""
+    notes: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Identity":
+        """Create from dictionary."""
+        roles = data.get("allowed_roles") or []
+        if isinstance(roles, str):
+            roles = [r.strip() for r in roles.split(",") if r.strip()]
+        return cls(
+            identity_name=data.get("identity_name", ""),
+            user=data.get("user", ""),
+            display_name=data.get("display_name", ""),
+            allowed_roles=list(roles),
+            default_role=data.get("default_role", ""),
+            notes=data.get("notes", ""),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+        )
+
+
 # ===================
 # Backend Interface
 # ===================
@@ -897,6 +942,68 @@ class MemoryClient:
 
         return sessions
 
+    # =======================
+    # Identity Operations
+    # =======================
+
+    def _identity_key(self, user: str, identity_name: str) -> str:
+        """Generate identity record key (project-independent)."""
+        return f"prismind:identity:{user}:{identity_name}"
+
+    def get_identity(self, user: str, identity_name: str) -> Optional[Identity]:
+        """Get a saved identity record by (user, identity_name)."""
+        if not user or not identity_name:
+            return None
+        entry = self.get(self._identity_key(user, identity_name))
+        if entry is None or entry.value is None:
+            return None
+        value = entry.value
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return None
+        return Identity.from_dict(value)
+
+    def save_identity(self, identity: Identity) -> MemoryOperationResult:
+        """Persist an identity record. Sets timestamps on the in-memory object."""
+        if not identity.user or not identity.identity_name:
+            return MemoryOperationResult(
+                success=False,
+                key="",
+                message="identity.user and identity.identity_name are required",
+            )
+
+        now = datetime.now().isoformat()
+        if not identity.created_at:
+            existing = self.get_identity(identity.user, identity.identity_name)
+            identity.created_at = existing.created_at if existing and existing.created_at else now
+        identity.updated_at = now
+
+        key = self._identity_key(identity.user, identity.identity_name)
+        return self.set(key, identity.to_dict())
+
+    def delete_identity(self, user: str, identity_name: str) -> MemoryOperationResult:
+        """Delete a saved identity record."""
+        return self.delete(self._identity_key(user, identity_name))
+
+    def list_identities(self, user: str = "") -> list[Identity]:
+        """List saved identities, optionally filtered by user."""
+        prefix = f"prismind:identity:{user}:" if user else "prismind:identity:"
+        out: list[Identity] = []
+        for key in self.list_keys(prefix):
+            entry = self.get(key)
+            if not (entry and entry.value):
+                continue
+            value = entry.value
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    continue
+            out.append(Identity.from_dict(value))
+        return out
+
     def list_context_authors(
         self,
         project: str,
@@ -929,16 +1036,26 @@ class MemoryClient:
             if existing is None or (state.updated_at or "") > (existing.updated_at or ""):
                 by_author[ident] = state
 
-        authors = [
-            {
+        authors: list[dict[str, Any]] = []
+        for s in by_author.values():
+            entry: dict[str, Any] = {
                 "author": s.author,
                 "user": s.user,
                 "updated_at": s.updated_at,
                 "current_task": s.current_task,
                 "current_phase": s.current_phase,
+                "identity": None,
             }
-            for s in by_author.values()
-        ]
+            # Join identity record if present. Lookup is cheap (key-based) and
+            # lets callers see allowed_roles / display_name without a second
+            # round-trip. Authors that pre-date identity records simply carry
+            # identity=None.
+            if s.author and s.user:
+                ident = self.get_identity(s.user, s.author)
+                if ident is not None:
+                    entry["identity"] = ident.to_dict()
+            authors.append(entry)
+
         authors.sort(key=lambda a: a["updated_at"] or "", reverse=True)
         return authors
 

@@ -149,6 +149,32 @@ class DeleteSessionResult:
 
 
 @dataclass
+class IdentityInfo:
+    """Identity record attached to a context author when one is registered."""
+
+    identity_name: str = ""
+    user: str = ""
+    display_name: str = ""
+    allowed_roles: list[str] = field(default_factory=list)
+    default_role: str = ""
+    notes: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "identity_name": self.identity_name,
+            "user": self.user,
+            "display_name": self.display_name,
+            "allowed_roles": list(self.allowed_roles),
+            "default_role": self.default_role,
+            "notes": self.notes,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
 class ContextAuthor:
     """A distinct context author that has saved state for a project."""
 
@@ -157,6 +183,7 @@ class ContextAuthor:
     current_phase: str = ""
     current_task: str = ""
     updated_at: Optional[datetime] = None
+    identity: Optional[IdentityInfo] = None
 
 
 @dataclass
@@ -167,4 +194,14 @@ class ContextAuthorsResult:
     project: str = ""
     authors: list[ContextAuthor] = field(default_factory=list)
     total_count: int = 0
+    message: str = ""
+
+
+@dataclass
+class UpsertIdentityResult:
+    """Result of upsert_identity."""
+
+    success: bool
+    identity: Optional[IdentityInfo] = None
+    created: bool = False
     message: str = ""

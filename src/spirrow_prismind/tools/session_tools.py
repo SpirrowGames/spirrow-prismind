@@ -7,6 +7,7 @@ from typing import Optional
 
 from ..integrations import (
     GoogleSheetsClient,
+    Identity,
     MemoryClient,
     RAGClient,
     SessionState,
@@ -17,11 +18,13 @@ from ..models import (
     DeleteSessionResult,
     DocReference,
     EndSessionResult,
+    IdentityInfo,
     ListSessionsResult,
     SaveSessionResult,
     SessionContext,
     SessionInfo,
     UpdateSummaryResult,
+    UpsertIdentityResult,
 )
 from .project_tools import ProjectTools
 
@@ -838,12 +841,26 @@ class SessionTools:
                         pass
                 elif isinstance(value, datetime):
                     updated_at = value
+                identity_info = None
+                ident_raw = entry.get("identity")
+                if isinstance(ident_raw, dict):
+                    identity_info = IdentityInfo(
+                        identity_name=ident_raw.get("identity_name", ""),
+                        user=ident_raw.get("user", ""),
+                        display_name=ident_raw.get("display_name", ""),
+                        allowed_roles=list(ident_raw.get("allowed_roles") or []),
+                        default_role=ident_raw.get("default_role", ""),
+                        notes=ident_raw.get("notes", ""),
+                        created_at=ident_raw.get("created_at", ""),
+                        updated_at=ident_raw.get("updated_at", ""),
+                    )
                 authors.append(ContextAuthor(
                     author=entry.get("author", ""),
                     user=entry.get("user", ""),
                     current_phase=entry.get("current_phase", ""),
                     current_task=entry.get("current_task", ""),
                     updated_at=updated_at,
+                    identity=identity_info,
                 ))
 
             return ContextAuthorsResult(
@@ -860,3 +877,91 @@ class SessionTools:
                 project=project,
                 message=f"コンテキストauthor一覧の取得に失敗しました: {e}",
             )
+
+    def upsert_identity(
+        self,
+        identity_name: str,
+        allowed_roles: Optional[list[str]] = None,
+        default_role: Optional[str] = None,
+        display_name: Optional[str] = None,
+        notes: Optional[str] = None,
+        user: Optional[str] = None,
+    ) -> UpsertIdentityResult:
+        """Create or update an identity record (cross-project actor declaration).
+
+        Identity records live in a separate key space from session state
+        (``prismind:identity:{user}:{identity_name}``), so role / allowed_roles
+        survive across projects and contexts and don't have to be redeclared on
+        every ``checkpoint`` / ``handoff``. ``identity_name`` is the same value
+        ``SessionState.author`` uses, which lets ``list_context_authors`` join
+        the identity record onto each author entry.
+
+        Fields passed as ``None`` are preserved from the existing record.
+        ``allowed_roles=[]`` explicitly clears the list.
+
+        Args:
+            identity_name: Stable identity slug (e.g. "claude.ai-heisenberg").
+            allowed_roles: Roles this identity is allowed to assume in
+                chatroom messages (e.g. ["proposer", "reviewer"]). Magickit is
+                the enforcement point; Prismind only persists the declaration.
+            default_role: Role assumed when a chatroom message omits one.
+            display_name: Human-readable label.
+            notes: Free-form description.
+            user: Owner. Defaults to the configured user_name.
+
+        Returns:
+            UpsertIdentityResult with the persisted record and a ``created``
+            flag indicating whether a new record was written.
+        """
+        if not identity_name:
+            return UpsertIdentityResult(
+                success=False, message="identity_name が指定されていません。",
+            )
+
+        owner = user or self.user_name
+        existing = self.memory.get_identity(owner, identity_name)
+
+        identity = Identity(
+            identity_name=identity_name,
+            user=owner,
+            display_name=(display_name if display_name is not None else (existing.display_name if existing else "")),
+            allowed_roles=(list(allowed_roles) if allowed_roles is not None else (list(existing.allowed_roles) if existing else [])),
+            default_role=(default_role if default_role is not None else (existing.default_role if existing else "")),
+            notes=(notes if notes is not None else (existing.notes if existing else "")),
+            created_at=(existing.created_at if existing else ""),
+        )
+
+        try:
+            result = self.memory.save_identity(identity)
+        except Exception as e:
+            logger.error(f"Failed to save identity: {e}")
+            return UpsertIdentityResult(
+                success=False, message=f"identityの保存に失敗しました: {e}",
+            )
+
+        if not result.success:
+            return UpsertIdentityResult(
+                success=False, message=result.message or "identityの保存に失敗しました。",
+            )
+
+        info = IdentityInfo(
+            identity_name=identity.identity_name,
+            user=identity.user,
+            display_name=identity.display_name,
+            allowed_roles=list(identity.allowed_roles),
+            default_role=identity.default_role,
+            notes=identity.notes,
+            created_at=identity.created_at,
+            updated_at=identity.updated_at,
+        )
+        created = existing is None
+        return UpsertIdentityResult(
+            success=True,
+            identity=info,
+            created=created,
+            message=(
+                f"identity '{identity_name}' を作成しました。"
+                if created
+                else f"identity '{identity_name}' を更新しました。"
+            ),
+        )

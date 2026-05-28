@@ -10,6 +10,7 @@ from .google_drive import (
 from .google_sheets import GoogleSheetsClient
 from .memory_client import (
     CurrentProject,
+    Identity,
     MemoryClient,
     MemoryEntry,
     MemoryOperationResult,
@@ -43,6 +44,7 @@ __all__ = [
     "GoogleSheetsClient",
     # Memory
     "CurrentProject",
+    "Identity",
     "MemoryClient",
     "MemoryEntry",
     "MemoryOperationResult",

@@ -55,11 +55,13 @@ from .session import (
     ContextAuthorsResult,
     DeleteSessionResult,
     EndSessionResult,
+    IdentityInfo,
     ListSessionsResult,
     SaveSessionResult,
     SessionContext,
     SessionInfo,
     SessionState,
+    UpsertIdentityResult,
 )
 from .setup import (
     ConfigureResult,
@@ -135,10 +137,15 @@ __all__ = [
     # Session
     "ContextAuthor",
     "ContextAuthorsResult",
+    "DeleteSessionResult",
     "EndSessionResult",
+    "IdentityInfo",
+    "ListSessionsResult",
     "SaveSessionResult",
     "SessionContext",
+    "SessionInfo",
     "SessionState",
+    "UpsertIdentityResult",
     # Setup
     "ConfigureResult",
     "ExportServerConfigResult",

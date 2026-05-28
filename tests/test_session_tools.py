@@ -819,3 +819,146 @@ class TestContextAuthorPartition:
 
         remaining = {a.author for a in session_tools.list_context_authors(project="del_proj").authors}
         assert remaining == {"claude-code"}
+
+
+class TestUpsertIdentity:
+    """Tests for upsert_identity and identity join on list_context_authors."""
+
+    def _setup(self, project_tools, project):
+        project_tools.setup_project(
+            project=project,
+            name=f"{project} name",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+    def test_upsert_identity_creates_record(self, session_tools, mock_memory_client):
+        """A fresh upsert returns created=True and persists fields."""
+        result = session_tools.upsert_identity(
+            identity_name="claude.ai-heisenberg",
+            allowed_roles=["proposer", "reviewer"],
+            default_role="proposer",
+            display_name="Heisenberg (claude.ai)",
+            notes="ADR proposer",
+        )
+
+        assert result.success is True
+        assert result.created is True
+        assert result.identity is not None
+        assert result.identity.identity_name == "claude.ai-heisenberg"
+        assert result.identity.allowed_roles == ["proposer", "reviewer"]
+        assert result.identity.default_role == "proposer"
+        assert result.identity.display_name == "Heisenberg (claude.ai)"
+        assert result.identity.created_at
+        assert result.identity.updated_at
+
+        # Verify persistence in the key space
+        from spirrow_prismind.integrations.memory_client import Identity
+        stored = mock_memory_client.get_identity("test_user", "claude.ai-heisenberg")
+        assert isinstance(stored, Identity)
+        assert stored.allowed_roles == ["proposer", "reviewer"]
+
+    def test_upsert_identity_preserves_fields_on_none(self, session_tools):
+        """Updating with None preserves existing values; [] explicitly clears."""
+        # Initial create
+        session_tools.upsert_identity(
+            identity_name="ident-1",
+            allowed_roles=["proposer", "reviewer"],
+            default_role="proposer",
+            display_name="Original",
+            notes="orig notes",
+        )
+
+        # Update only default_role; other fields preserved
+        result = session_tools.upsert_identity(
+            identity_name="ident-1",
+            default_role="reviewer",
+        )
+        assert result.success is True
+        assert result.created is False
+        assert result.identity.allowed_roles == ["proposer", "reviewer"]
+        assert result.identity.default_role == "reviewer"
+        assert result.identity.display_name == "Original"
+        assert result.identity.notes == "orig notes"
+
+        # Empty list explicitly clears
+        cleared = session_tools.upsert_identity(
+            identity_name="ident-1",
+            allowed_roles=[],
+        )
+        assert cleared.identity.allowed_roles == []
+
+    def test_upsert_identity_requires_name(self, session_tools):
+        """Empty identity_name fails fast."""
+        result = session_tools.upsert_identity(identity_name="")
+        assert result.success is False
+
+    def test_upsert_identity_preserves_created_at(self, session_tools):
+        """Updating an existing identity keeps the original created_at."""
+        first = session_tools.upsert_identity(
+            identity_name="ident-2", default_role="proposer",
+        )
+        original_created = first.identity.created_at
+
+        second = session_tools.upsert_identity(
+            identity_name="ident-2", default_role="reviewer",
+        )
+        assert second.identity.created_at == original_created
+        assert second.identity.updated_at >= original_created
+
+    def test_list_context_authors_joins_identity(self, session_tools, project_tools):
+        """list_context_authors attaches the identity record when one exists."""
+        self._setup(project_tools, "join_proj")
+
+        # Register identity, then save a session under the same author
+        session_tools.upsert_identity(
+            identity_name="claude.ai-heisenberg",
+            allowed_roles=["proposer", "reviewer"],
+            default_role="proposer",
+            display_name="Heisenberg",
+        )
+        session_tools.save_session(
+            project="join_proj", summary="design", current_task="T-arch",
+            author="claude.ai-heisenberg",
+        )
+        # Save a second author with no identity record
+        session_tools.save_session(
+            project="join_proj", summary="impl", current_task="T-impl",
+            author="claude-code",
+        )
+
+        result = session_tools.list_context_authors(project="join_proj")
+        assert result.success is True
+
+        by_author = {a.author: a for a in result.authors}
+        ident_entry = by_author["claude.ai-heisenberg"]
+        assert ident_entry.identity is not None
+        assert ident_entry.identity.allowed_roles == ["proposer", "reviewer"]
+        assert ident_entry.identity.default_role == "proposer"
+        assert ident_entry.identity.display_name == "Heisenberg"
+
+        no_ident_entry = by_author["claude-code"]
+        assert no_ident_entry.identity is None
+
+    def test_identity_is_cross_project(self, session_tools, project_tools):
+        """The same identity surfaces under multiple projects."""
+        self._setup(project_tools, "cp_a")
+        self._setup(project_tools, "cp_b")
+
+        session_tools.upsert_identity(
+            identity_name="claude.ai-heisenberg",
+            allowed_roles=["proposer"],
+        )
+        session_tools.save_session(
+            project="cp_a", summary="a", author="claude.ai-heisenberg",
+        )
+        session_tools.save_session(
+            project="cp_b", summary="b", author="claude.ai-heisenberg",
+        )
+
+        a = session_tools.list_context_authors(project="cp_a").authors[0]
+        b = session_tools.list_context_authors(project="cp_b").authors[0]
+        assert a.identity is not None and a.identity.allowed_roles == ["proposer"]
+        assert b.identity is not None and b.identity.allowed_roles == ["proposer"]

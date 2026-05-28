@@ -279,7 +279,7 @@ TOOLS = [
     ),
     Tool(
         name="list_context_authors",
-        description="List the distinct context authors/roles that have saved session state for a project. Use this to avoid creating duplicate contexts from naming variations and to check whether your own author's context already exists.",
+        description="List the distinct context authors/roles that have saved session state for a project. Use this to avoid creating duplicate contexts from naming variations and to check whether your own author's context already exists. Each entry carries an 'identity' object (or null) joined from the cross-project identity record (see upsert_identity), so callers see allowed_roles without a second lookup.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -293,6 +293,50 @@ TOOLS = [
                 },
             },
             "required": ["project"],
+        },
+    ),
+    Tool(
+        name="upsert_identity",
+        description=(
+            "Create or update an identity record (cross-project actor declaration). "
+            "Identity records persist allowed_roles / default_role / display_name in a "
+            "key space separate from session state (prismind:identity:{user}:{identity_name}), "
+            "so the declaration survives across projects and contexts without being redeclared "
+            "on every checkpoint/handoff. identity_name is the same string SessionState.author uses; "
+            "list_context_authors joins the identity record onto each author entry so callers can "
+            "see allowed_roles in one round-trip. Fields passed as null preserve the existing value; "
+            "allowed_roles=[] explicitly clears the list."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "identity_name": {
+                    "type": "string",
+                    "description": "Stable identity slug (e.g. 'claude.ai-heisenberg'). Same value as SessionState.author.",
+                },
+                "allowed_roles": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Roles this identity is allowed to assume in chatroom messages (e.g. ['proposer', 'reviewer']). Magickit enforces; Prismind only persists. Omit to keep the existing list; pass [] to clear.",
+                },
+                "default_role": {
+                    "type": "string",
+                    "description": "Role assumed when a chatroom message omits one. Omit to keep the existing value.",
+                },
+                "display_name": {
+                    "type": "string",
+                    "description": "Human-readable label. Omit to keep the existing value.",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Free-form description. Omit to keep the existing value.",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "Owning user (defaults to the configured user_name).",
+                },
+            },
+            "required": ["identity_name"],
         },
     ),
     # Project Management
@@ -1636,7 +1680,8 @@ class PrismindServer:
         # Check if required tools are initialized
         google_required_tools = [
             "start_session", "end_session", "save_session", "update_session_progress",
-            "list_sessions", "delete_session", "list_context_authors", "update_summary",
+            "list_sessions", "delete_session", "list_context_authors",
+            "upsert_identity", "update_summary",
             "setup_project", "switch_project", "list_projects",
             "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
@@ -1784,10 +1829,27 @@ class PrismindServer:
                         "current_phase": a.current_phase,
                         "current_task": a.current_task,
                         "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+                        "identity": a.identity.to_dict() if a.identity else None,
                     }
                     for a in result.authors
                 ],
                 "total_count": result.total_count,
+                "message": result.message,
+            }
+
+        elif name == "upsert_identity":
+            result = self._session_tools.upsert_identity(
+                identity_name=args["identity_name"],
+                allowed_roles=args.get("allowed_roles"),
+                default_role=args.get("default_role"),
+                display_name=args.get("display_name"),
+                notes=args.get("notes"),
+                user=args.get("user"),
+            )
+            return {
+                "success": result.success,
+                "identity": result.identity.to_dict() if result.identity else None,
+                "created": result.created,
                 "message": result.message,
             }
 
