@@ -11,6 +11,7 @@ from .google_sheets import GoogleSheetsClient
 from .memory_client import (
     CurrentProject,
     EMBODIMENT_VALUES,
+    HUMAN_IDENTITY_NAMES,
     INDEPENDENCE_CLASS_VALUES,
     Identity,
     MemoryClient,
@@ -47,6 +48,7 @@ __all__ = [
     # Memory
     "CurrentProject",
     "EMBODIMENT_VALUES",
+    "HUMAN_IDENTITY_NAMES",
     "INDEPENDENCE_CLASS_VALUES",
     "Identity",
     "MemoryClient",

@@ -292,7 +292,10 @@ class MockMemoryClient(MemoryClient):
             if s.author and s.user:
                 ident_record = self.get_identity(s.user, s.author)
                 if ident_record is not None:
-                    entry["identity"] = ident_record.to_dict()
+                    from spirrow_prismind.integrations.memory_client import (
+                        _identity_to_response_dict,
+                    )
+                    entry["identity"] = _identity_to_response_dict(ident_record)
             authors.append(entry)
         authors.sort(key=lambda a: a["updated_at"] or "", reverse=True)
         return authors

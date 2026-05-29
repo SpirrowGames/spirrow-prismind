@@ -113,7 +113,7 @@ TOOLS = [
     # Session Management
     Tool(
         name="start_session",
-        description="Start a session and load saved state. Uses current project if project is not specified. Specify 'author' to restore a specific context-author/role partition.",
+        description="Start a session and load saved state. Uses current project if project is not specified. Specify 'author' to restore a specific context-author/role partition. Optionally declare 'embodiment' (ADR-2026-05-29-12 self-declared runtime form) to record on the loaded SessionState.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -125,12 +125,17 @@ TOOLS = [
                     "type": "string",
                     "description": "Context author/role partition to restore (omit for the default context)",
                 },
+                "embodiment": {
+                    "type": ["string", "null"],
+                    "enum": ["web_ai_chat", "terminal_coding_agent", "unknown", None],
+                    "description": "Self-declared runtime form (ADR-2026-05-29-12). Optional; recorded on SessionState if supplied.",
+                },
             },
         },
     ),
     Tool(
         name="end_session",
-        description="End the session and save state. Uses current project if project is not specified.",
+        description="End the session and save state. Uses current project if project is not specified. Optionally declare 'embodiment' to record on the saved SessionState.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -159,12 +164,17 @@ TOOLS = [
                     "type": "string",
                     "description": "Context author/role partition (omit for the default context)",
                 },
+                "embodiment": {
+                    "type": ["string", "null"],
+                    "enum": ["web_ai_chat", "terminal_coding_agent", "unknown", None],
+                    "description": "Self-declared runtime form (ADR-2026-05-29-12). Optional.",
+                },
             },
         },
     ),
     Tool(
         name="save_session",
-        description="Save session state without ending the session. Uses current project if project is not specified.",
+        description="Save session state without ending the session. Uses current project if project is not specified. Optionally declare 'embodiment' to record on SessionState.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -201,12 +211,17 @@ TOOLS = [
                     "type": "string",
                     "description": "Context author/role partition (omit for the default context)",
                 },
+                "embodiment": {
+                    "type": ["string", "null"],
+                    "enum": ["web_ai_chat", "terminal_coding_agent", "unknown", None],
+                    "description": "Self-declared runtime form (ADR-2026-05-29-12). Optional.",
+                },
             },
         },
     ),
     Tool(
         name="update_session_progress",
-        description="Update session progress (phase, task, blockers). Uses current project if project is not specified.",
+        description="Update session progress (phase, task, blockers). Uses current project if project is not specified. Optionally declare 'embodiment' to record on SessionState.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -234,6 +249,11 @@ TOOLS = [
                 "author": {
                     "type": "string",
                     "description": "Context author/role partition (omit for the default context)",
+                },
+                "embodiment": {
+                    "type": ["string", "null"],
+                    "enum": ["web_ai_chat", "terminal_coding_agent", "unknown", None],
+                    "description": "Self-declared runtime form (ADR-2026-05-29-12). Optional.",
                 },
             },
         },
@@ -299,15 +319,18 @@ TOOLS = [
         name="upsert_identity",
         description=(
             "Create or update an identity record (cross-project actor declaration). "
-            "Identity records persist allowed_roles / embodiment / independence_class / "
+            "Identity records persist allowed_roles / independence_class / "
             "persona_description in a key space separate from session state "
             "(prismind:identity:{user}:{identity_name}), realizing ADR-2026-05-27-09 D-3's "
             "persona-continuity gate at the API level. identity_name is the same string "
             "SessionState.author uses; list_context_authors joins the identity record onto "
             "each author entry so callers see allowed_roles in one round-trip. "
-            "embodiment and independence_class are required on every upsert (re-declared, not "
-            "preserved) -- this is the '書き忘れ不能' guarantee. allowed_roles is required "
-            "unless keep_allowed_roles=True. persona_description defaults to preserve-on-omit."
+            "independence_class is required on every upsert (re-declared, not preserved) -- "
+            "this is the '書き忘れ不能' guarantee. allowed_roles is required unless "
+            "keep_allowed_roles=True. persona_description defaults to preserve-on-omit. "
+            "embodiment is DEPRECATED (ADR-2026-05-29-12); runtime self-declared via the "
+            "five APIs on Magickit (checkpoint/resume/chatroom_*). Pass omit or null; "
+            "the field is preserved in the schema only for the staged migration window."
         ),
         inputSchema={
             "type": "object",
@@ -315,11 +338,6 @@ TOOLS = [
                 "identity_name": {
                     "type": "string",
                     "description": "Stable identity slug (e.g. 'Heisenberg'). Same value as SessionState.author.",
-                },
-                "embodiment": {
-                    "type": "string",
-                    "enum": ["web_ai_chat", "terminal_coding_agent"],
-                    "description": "Runtime form. Required on every upsert. Empty strings rejected.",
                 },
                 "independence_class": {
                     "type": "string",
@@ -340,12 +358,17 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional human-readable persona note. Omit to preserve the existing value.",
                 },
+                "embodiment": {
+                    "type": ["string", "null"],
+                    "enum": ["web_ai_chat", "terminal_coding_agent", "unknown", None],
+                    "description": "DEPRECATED (ADR-2026-05-29-12). Pass null or omit. Runtime form is now self-declared on the five APIs at Magickit level.",
+                },
                 "user": {
                     "type": "string",
                     "description": "Owning user (defaults to the configured user_name).",
                 },
             },
-            "required": ["identity_name", "embodiment", "independence_class"],
+            "required": ["identity_name", "independence_class"],
         },
     ),
     # Project Management
@@ -1740,6 +1763,7 @@ class PrismindServer:
                 notes=args.get("notes"),
                 project=args.get("project"),
                 author=args.get("author"),
+                embodiment=args.get("embodiment"),
             )
             return {
                 "success": result.success,
@@ -1758,6 +1782,7 @@ class PrismindServer:
                 current_task=args.get("current_task"),
                 project=args.get("project"),
                 author=args.get("author"),
+                embodiment=args.get("embodiment"),
             )
             return {
                 "success": result.success,
@@ -1773,6 +1798,7 @@ class PrismindServer:
                 blockers=args.get("blockers"),
                 project=args.get("project"),
                 author=args.get("author"),
+                embodiment=args.get("embodiment"),
             )
             return {
                 "success": result.success,
@@ -1849,11 +1875,11 @@ class PrismindServer:
         elif name == "upsert_identity":
             result = self._session_tools.upsert_identity(
                 identity_name=args["identity_name"],
-                embodiment=args.get("embodiment", ""),
                 independence_class=args.get("independence_class", ""),
                 allowed_roles=args.get("allowed_roles"),
                 keep_allowed_roles=args.get("keep_allowed_roles", False),
                 persona_description=args.get("persona_description"),
+                embodiment=args.get("embodiment"),
                 user=args.get("user"),
             )
             return {

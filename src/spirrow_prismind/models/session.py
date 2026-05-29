@@ -39,7 +39,11 @@ class SessionContext:
 
 @dataclass
 class SessionState:
-    """State saved to MCP Memory Server."""
+    """State saved to MCP Memory Server.
+
+    ``embodiment`` (ADR-2026-05-29-12) is the self-declared runtime form of
+    the calling agent at the moment of the latest checkpoint / resume.
+    """
 
     project: str
     user: str
@@ -52,6 +56,7 @@ class SessionState:
     next_action: str = ""
     author: str = ""
     updated_at: datetime = field(default_factory=datetime.now)
+    embodiment: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for storage."""
@@ -67,6 +72,7 @@ class SessionState:
             "last_summary": self.last_summary,
             "next_action": self.next_action,
             "updated_at": self.updated_at.isoformat(),
+            "embodiment": self.embodiment,
         }
 
     @classmethod
@@ -90,6 +96,7 @@ class SessionState:
             next_action=data.get("next_action", ""),
             author=data.get("author", ""),
             updated_at=updated_at,
+            embodiment=data.get("embodiment"),
         )
 
 
@@ -153,30 +160,44 @@ class IdentityInfo:
     """Identity record attached to a context author when one is registered.
 
     Shape locked by msg-002 §1.1 / msg-005 D-5 (α) on
-    T-magickit-identity-extension. See Identity dataclass docstring for the
-    rationale behind each field.
+    T-magickit-identity-extension, revised by ADR-2026-05-29-12 on
+    T-embodiment-self-declared: ``embodiment`` is now ``Optional[str]``
+    (deprecated on identity, self-declared at runtime). For human
+    identities the response-side serializer omits the key entirely
+    (see ``_identity_to_response_dict`` in memory_client).
     """
 
     identity_name: str = ""
     user: str = ""
     allowed_roles: list[str] = field(default_factory=list)
-    embodiment: str = ""
+    embodiment: Optional[str] = None  # DEPRECATED -- ADR-2026-05-29-12
     independence_class: str = ""
     persona_description: str = ""
     created_at: str = ""
     updated_at: str = ""
 
     def to_dict(self) -> dict:
-        return {
+        """Serialize for API response.
+
+        Applies ADR-2026-05-29-12 §3 "case 3" human-omit: human identities
+        omit the ``embodiment`` key entirely (not None). The pinned test
+        ``test_human_identity_response_omits_embodiment`` fails if a human
+        record ever leaks the key, catching silent regression.
+        """
+        out: dict = {
             "identity_name": self.identity_name,
             "user": self.user,
             "allowed_roles": list(self.allowed_roles),
-            "embodiment": self.embodiment,
             "independence_class": self.independence_class,
             "persona_description": self.persona_description,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        # Avoid importing memory_client here -- keep the constant inline
+        # (it is intentionally short and matches the upstream definition).
+        if self.identity_name not in ("human",):
+            out["embodiment"] = self.embodiment
+        return out
 
 
 @dataclass
