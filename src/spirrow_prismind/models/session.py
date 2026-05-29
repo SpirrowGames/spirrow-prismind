@@ -150,14 +150,19 @@ class DeleteSessionResult:
 
 @dataclass
 class IdentityInfo:
-    """Identity record attached to a context author when one is registered."""
+    """Identity record attached to a context author when one is registered.
+
+    Shape locked by msg-002 §1.1 / msg-005 D-5 (α) on
+    T-magickit-identity-extension. See Identity dataclass docstring for the
+    rationale behind each field.
+    """
 
     identity_name: str = ""
     user: str = ""
-    display_name: str = ""
     allowed_roles: list[str] = field(default_factory=list)
-    default_role: str = ""
-    notes: str = ""
+    embodiment: str = ""
+    independence_class: str = ""
+    persona_description: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -165,10 +170,10 @@ class IdentityInfo:
         return {
             "identity_name": self.identity_name,
             "user": self.user,
-            "display_name": self.display_name,
             "allowed_roles": list(self.allowed_roles),
-            "default_role": self.default_role,
-            "notes": self.notes,
+            "embodiment": self.embodiment,
+            "independence_class": self.independence_class,
+            "persona_description": self.persona_description,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

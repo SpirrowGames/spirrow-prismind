@@ -299,44 +299,53 @@ TOOLS = [
         name="upsert_identity",
         description=(
             "Create or update an identity record (cross-project actor declaration). "
-            "Identity records persist allowed_roles / default_role / display_name in a "
-            "key space separate from session state (prismind:identity:{user}:{identity_name}), "
-            "so the declaration survives across projects and contexts without being redeclared "
-            "on every checkpoint/handoff. identity_name is the same string SessionState.author uses; "
-            "list_context_authors joins the identity record onto each author entry so callers can "
-            "see allowed_roles in one round-trip. Fields passed as null preserve the existing value; "
-            "allowed_roles=[] explicitly clears the list."
+            "Identity records persist allowed_roles / embodiment / independence_class / "
+            "persona_description in a key space separate from session state "
+            "(prismind:identity:{user}:{identity_name}), realizing ADR-2026-05-27-09 D-3's "
+            "persona-continuity gate at the API level. identity_name is the same string "
+            "SessionState.author uses; list_context_authors joins the identity record onto "
+            "each author entry so callers see allowed_roles in one round-trip. "
+            "embodiment and independence_class are required on every upsert (re-declared, not "
+            "preserved) -- this is the '書き忘れ不能' guarantee. allowed_roles is required "
+            "unless keep_allowed_roles=True. persona_description defaults to preserve-on-omit."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "identity_name": {
                     "type": "string",
-                    "description": "Stable identity slug (e.g. 'claude.ai-heisenberg'). Same value as SessionState.author.",
+                    "description": "Stable identity slug (e.g. 'Heisenberg'). Same value as SessionState.author.",
+                },
+                "embodiment": {
+                    "type": "string",
+                    "enum": ["web_ai_chat", "terminal_coding_agent"],
+                    "description": "Runtime form. Required on every upsert. Empty strings rejected.",
+                },
+                "independence_class": {
+                    "type": "string",
+                    "enum": ["main-chain", "independent", "human"],
+                    "description": "Actor's gating class for ADR-09 D-3. Required on every upsert.",
                 },
                 "allowed_roles": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Roles this identity is allowed to assume in chatroom messages (e.g. ['proposer', 'reviewer']). Magickit enforces; Prismind only persists. Omit to keep the existing list; pass [] to clear.",
+                    "description": "Roles this identity may assume (e.g. ['proposer', 'reviewer']). Required unless keep_allowed_roles=True. Magickit enforces; Prismind only persists.",
                 },
-                "default_role": {
-                    "type": "string",
-                    "description": "Role assumed when a chatroom message omits one. Omit to keep the existing value.",
+                "keep_allowed_roles": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, preserve the existing allowed_roles list. Mutually exclusive with allowed_roles. Only valid when the identity already exists.",
                 },
-                "display_name": {
+                "persona_description": {
                     "type": "string",
-                    "description": "Human-readable label. Omit to keep the existing value.",
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Free-form description. Omit to keep the existing value.",
+                    "description": "Optional human-readable persona note. Omit to preserve the existing value.",
                 },
                 "user": {
                     "type": "string",
                     "description": "Owning user (defaults to the configured user_name).",
                 },
             },
-            "required": ["identity_name"],
+            "required": ["identity_name", "embodiment", "independence_class"],
         },
     ),
     # Project Management
@@ -1840,10 +1849,11 @@ class PrismindServer:
         elif name == "upsert_identity":
             result = self._session_tools.upsert_identity(
                 identity_name=args["identity_name"],
+                embodiment=args.get("embodiment", ""),
+                independence_class=args.get("independence_class", ""),
                 allowed_roles=args.get("allowed_roles"),
-                default_role=args.get("default_role"),
-                display_name=args.get("display_name"),
-                notes=args.get("notes"),
+                keep_allowed_roles=args.get("keep_allowed_roles", False),
+                persona_description=args.get("persona_description"),
                 user=args.get("user"),
             )
             return {
