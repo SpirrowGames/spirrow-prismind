@@ -96,14 +96,32 @@ class CurrentProject:
         )
 
 
+EMBODIMENT_VALUES = ("web_ai_chat", "terminal_coding_agent")
+INDEPENDENCE_CLASS_VALUES = ("main-chain", "independent", "human")
+
+
 @dataclass
 class Identity:
     """Stable, cross-project identity record for an actor (e.g. an AI role).
 
-    Identity is a separate key space from SessionState so that
-    role / allowed_roles travel with the actor rather than per-context, and
+    Identity is a separate key space from SessionState so that the actor's
+    static attributes (allowed_roles / embodiment / independence_class /
+    persona_description) travel with the actor rather than per-context, and
     the same identity can hold contexts under multiple projects without
-    duplicating the role declaration on each save.
+    duplicating these declarations on each save.
+
+    Shape locked by msg-002 §1.1 / msg-005 D-5 (α) on
+    T-magickit-identity-extension. The four schema fields realize
+    ADR-2026-05-27-09 D-3's persona-continuity gate at the API level:
+
+    - ``allowed_roles`` -- which roles this actor may assume; enforced by
+      Magickit on chatroom posts (P2 / P3).
+    - ``embodiment`` -- runtime form (web_ai_chat / terminal_coding_agent).
+      The two-way enum is intentional per §0: model identity is *not*
+      surfaced, only the operational mode that's visible to other actors.
+    - ``independence_class`` -- main-chain / independent / human. Required
+      on every upsert ("書き忘れ不能" guarantee from msg-001 §C-4).
+    - ``persona_description`` -- optional human-readable persona note.
 
     The persisted key is ``prismind:identity:{user}:{identity_name}``.
     ``identity_name`` is the same string that ``SessionState.author`` uses,
@@ -112,10 +130,10 @@ class Identity:
 
     identity_name: str
     user: str
-    display_name: str = ""
     allowed_roles: list[str] = field(default_factory=list)
-    default_role: str = ""
-    notes: str = ""
+    embodiment: str = ""
+    independence_class: str = ""
+    persona_description: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -125,17 +143,17 @@ class Identity:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Identity":
-        """Create from dictionary."""
+        """Create from dictionary. Unknown keys are ignored."""
         roles = data.get("allowed_roles") or []
         if isinstance(roles, str):
             roles = [r.strip() for r in roles.split(",") if r.strip()]
         return cls(
             identity_name=data.get("identity_name", ""),
             user=data.get("user", ""),
-            display_name=data.get("display_name", ""),
             allowed_roles=list(roles),
-            default_role=data.get("default_role", ""),
-            notes=data.get("notes", ""),
+            embodiment=data.get("embodiment", ""),
+            independence_class=data.get("independence_class", ""),
+            persona_description=data.get("persona_description", ""),
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
         )

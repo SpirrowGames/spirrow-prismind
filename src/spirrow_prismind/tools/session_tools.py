@@ -6,7 +6,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ..integrations import (
+    EMBODIMENT_VALUES,
     GoogleSheetsClient,
+    INDEPENDENCE_CLASS_VALUES,
     Identity,
     MemoryClient,
     RAGClient,
@@ -847,10 +849,10 @@ class SessionTools:
                     identity_info = IdentityInfo(
                         identity_name=ident_raw.get("identity_name", ""),
                         user=ident_raw.get("user", ""),
-                        display_name=ident_raw.get("display_name", ""),
                         allowed_roles=list(ident_raw.get("allowed_roles") or []),
-                        default_role=ident_raw.get("default_role", ""),
-                        notes=ident_raw.get("notes", ""),
+                        embodiment=ident_raw.get("embodiment", ""),
+                        independence_class=ident_raw.get("independence_class", ""),
+                        persona_description=ident_raw.get("persona_description", ""),
                         created_at=ident_raw.get("created_at", ""),
                         updated_at=ident_raw.get("updated_at", ""),
                     )
@@ -881,53 +883,124 @@ class SessionTools:
     def upsert_identity(
         self,
         identity_name: str,
+        embodiment: str,
+        independence_class: str,
         allowed_roles: Optional[list[str]] = None,
-        default_role: Optional[str] = None,
-        display_name: Optional[str] = None,
-        notes: Optional[str] = None,
+        keep_allowed_roles: bool = False,
+        persona_description: Optional[str] = None,
         user: Optional[str] = None,
     ) -> UpsertIdentityResult:
         """Create or update an identity record (cross-project actor declaration).
 
         Identity records live in a separate key space from session state
-        (``prismind:identity:{user}:{identity_name}``), so role / allowed_roles
-        survive across projects and contexts and don't have to be redeclared on
-        every ``checkpoint`` / ``handoff``. ``identity_name`` is the same value
-        ``SessionState.author`` uses, which lets ``list_context_authors`` join
-        the identity record onto each author entry.
+        (``prismind:identity:{user}:{identity_name}``), so the actor's static
+        attributes (allowed_roles / embodiment / independence_class /
+        persona_description) survive across projects and contexts.
+        ``identity_name`` is the same value ``SessionState.author`` uses,
+        which lets ``list_context_authors`` join the identity record onto
+        each author entry.
 
-        Fields passed as ``None`` are preserved from the existing record.
-        ``allowed_roles=[]`` explicitly clears the list.
+        Required-field semantics realize ADR-2026-05-27-09 D-3's
+        persona-continuity gate at the API level (msg-001 §C-4
+        "書き忘れ不能" guarantee, locked by msg-005 D-5 (α)):
+
+        - ``embodiment`` and ``independence_class`` are required on every
+          upsert (they declare what the actor *is*; you re-state them rather
+          than risk silent drift).
+        - ``allowed_roles`` is required unless ``keep_allowed_roles=True``,
+          which explicitly preserves the existing list. Passing both
+          ``allowed_roles`` and ``keep_allowed_roles=True`` is a conflict.
+        - ``persona_description`` is optional; pass ``None`` (or omit) to
+          preserve the existing value.
+
+        Enum validation: ``embodiment`` ∈ ``EMBODIMENT_VALUES``,
+        ``independence_class`` ∈ ``INDEPENDENCE_CLASS_VALUES``. Empty strings
+        and unknown values are rejected (msg-002 §1.4).
 
         Args:
-            identity_name: Stable identity slug (e.g. "claude.ai-heisenberg").
-            allowed_roles: Roles this identity is allowed to assume in
-                chatroom messages (e.g. ["proposer", "reviewer"]). Magickit is
-                the enforcement point; Prismind only persists the declaration.
-            default_role: Role assumed when a chatroom message omits one.
-            display_name: Human-readable label.
-            notes: Free-form description.
+            identity_name: Stable identity slug (e.g. "Heisenberg").
+            embodiment: Runtime form. Required.
+            independence_class: Actor's gating class for D-3. Required.
+            allowed_roles: Roles this identity may assume (e.g.
+                ["proposer", "reviewer"]). Required unless
+                ``keep_allowed_roles=True``.
+            keep_allowed_roles: If True, preserve the existing list.
+                Mutually exclusive with ``allowed_roles``.
+            persona_description: Optional human-readable persona note.
+                ``None`` preserves the existing value.
             user: Owner. Defaults to the configured user_name.
 
         Returns:
             UpsertIdentityResult with the persisted record and a ``created``
-            flag indicating whether a new record was written.
+            flag indicating whether a new record was written. Validation
+            failures return ``success=False`` with a descriptive message
+            (no record is written).
         """
         if not identity_name:
             return UpsertIdentityResult(
                 success=False, message="identity_name が指定されていません。",
             )
 
+        if embodiment not in EMBODIMENT_VALUES:
+            return UpsertIdentityResult(
+                success=False,
+                message=(
+                    f"embodiment は {list(EMBODIMENT_VALUES)} のいずれかが必須です "
+                    f"(指定値: {embodiment!r})。"
+                ),
+            )
+        if independence_class not in INDEPENDENCE_CLASS_VALUES:
+            return UpsertIdentityResult(
+                success=False,
+                message=(
+                    f"independence_class は {list(INDEPENDENCE_CLASS_VALUES)} のいずれかが必須です "
+                    f"(指定値: {independence_class!r})。"
+                ),
+            )
+
+        if allowed_roles is not None and keep_allowed_roles:
+            return UpsertIdentityResult(
+                success=False,
+                message=(
+                    "allowed_roles と keep_allowed_roles=True は同時に指定できません。"
+                ),
+            )
+
         owner = user or self.user_name
         existing = self.memory.get_identity(owner, identity_name)
+
+        if keep_allowed_roles:
+            if existing is None:
+                return UpsertIdentityResult(
+                    success=False,
+                    message=(
+                        "keep_allowed_roles=True は既存 identity の更新時のみ使用できます "
+                        f"(identity '{identity_name}' は未登録)。"
+                    ),
+                )
+            roles = list(existing.allowed_roles)
+        else:
+            if allowed_roles is None:
+                return UpsertIdentityResult(
+                    success=False,
+                    message=(
+                        "allowed_roles は必須です (preserve したい場合は "
+                        "keep_allowed_roles=True を指定してください)。"
+                    ),
+                )
+            roles = list(allowed_roles)
 
         identity = Identity(
             identity_name=identity_name,
             user=owner,
-            display_name=(display_name if display_name is not None else (existing.display_name if existing else "")),
-            allowed_roles=(list(allowed_roles) if allowed_roles is not None else (list(existing.allowed_roles) if existing else [])),
-            default_role=(default_role if default_role is not None else (existing.default_role if existing else "")),
-            notes=(notes if notes is not None else (existing.notes if existing else "")),
+            allowed_roles=roles,
+            embodiment=embodiment,
+            independence_class=independence_class,
+            persona_description=(
+                persona_description
+                if persona_description is not None
+                else (existing.persona_description if existing else "")
+            ),
             created_at=(existing.created_at if existing else ""),
         )
 
@@ -947,10 +1020,10 @@ class SessionTools:
         info = IdentityInfo(
             identity_name=identity.identity_name,
             user=identity.user,
-            display_name=identity.display_name,
             allowed_roles=list(identity.allowed_roles),
-            default_role=identity.default_role,
-            notes=identity.notes,
+            embodiment=identity.embodiment,
+            independence_class=identity.independence_class,
+            persona_description=identity.persona_description,
             created_at=identity.created_at,
             updated_at=identity.updated_at,
         )

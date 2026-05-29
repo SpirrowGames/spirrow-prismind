@@ -822,7 +822,12 @@ class TestContextAuthorPartition:
 
 
 class TestUpsertIdentity:
-    """Tests for upsert_identity and identity join on list_context_authors."""
+    """Tests for upsert_identity and identity join on list_context_authors.
+
+    Shape locked by msg-002 §1.1 / msg-005 D-5 (α): embodiment and
+    independence_class are required on every upsert (re-declared, not
+    preserved), allowed_roles is required unless keep_allowed_roles=True.
+    """
 
     def _setup(self, project_tools, project):
         project_tools.setup_project(
@@ -835,78 +840,175 @@ class TestUpsertIdentity:
         )
 
     def test_upsert_identity_creates_record(self, session_tools, mock_memory_client):
-        """A fresh upsert returns created=True and persists fields."""
+        """A fresh upsert returns created=True and persists all required fields."""
         result = session_tools.upsert_identity(
-            identity_name="claude.ai-heisenberg",
-            allowed_roles=["proposer", "reviewer"],
-            default_role="proposer",
-            display_name="Heisenberg (claude.ai)",
-            notes="ADR proposer",
+            identity_name="Heisenberg",
+            embodiment="terminal_coding_agent",
+            independence_class="main-chain",
+            allowed_roles=["proposer", "reviewer", "implementer"],
+            persona_description="Heisenberg persona note",
         )
 
         assert result.success is True
         assert result.created is True
         assert result.identity is not None
-        assert result.identity.identity_name == "claude.ai-heisenberg"
-        assert result.identity.allowed_roles == ["proposer", "reviewer"]
-        assert result.identity.default_role == "proposer"
-        assert result.identity.display_name == "Heisenberg (claude.ai)"
+        assert result.identity.identity_name == "Heisenberg"
+        assert result.identity.allowed_roles == ["proposer", "reviewer", "implementer"]
+        assert result.identity.embodiment == "terminal_coding_agent"
+        assert result.identity.independence_class == "main-chain"
+        assert result.identity.persona_description == "Heisenberg persona note"
         assert result.identity.created_at
         assert result.identity.updated_at
 
         # Verify persistence in the key space
         from spirrow_prismind.integrations.memory_client import Identity
-        stored = mock_memory_client.get_identity("test_user", "claude.ai-heisenberg")
+        stored = mock_memory_client.get_identity("test_user", "Heisenberg")
         assert isinstance(stored, Identity)
-        assert stored.allowed_roles == ["proposer", "reviewer"]
+        assert stored.allowed_roles == ["proposer", "reviewer", "implementer"]
+        assert stored.embodiment == "terminal_coding_agent"
+        assert stored.independence_class == "main-chain"
 
-    def test_upsert_identity_preserves_fields_on_none(self, session_tools):
-        """Updating with None preserves existing values; [] explicitly clears."""
+    def test_embodiment_required_and_enum_validated(self, session_tools):
+        """embodiment must be one of EMBODIMENT_VALUES on every upsert."""
+        # Empty rejected
+        r = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="",
+            independence_class="main-chain",
+            allowed_roles=["proposer"],
+        )
+        assert r.success is False
+        assert "embodiment" in r.message
+
+        # Unknown value rejected
+        r = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="cli_robot",
+            independence_class="main-chain",
+            allowed_roles=["proposer"],
+        )
+        assert r.success is False
+        assert "embodiment" in r.message
+
+    def test_independence_class_required_and_enum_validated(self, session_tools):
+        """independence_class must be one of INDEPENDENCE_CLASS_VALUES."""
+        r = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="",
+            allowed_roles=["proposer"],
+        )
+        assert r.success is False
+        assert "independence_class" in r.message
+
+        r = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="hybrid",
+            allowed_roles=["proposer"],
+        )
+        assert r.success is False
+        assert "independence_class" in r.message
+
+    def test_allowed_roles_required_without_keep_flag(self, session_tools):
+        """Omitting allowed_roles without keep_allowed_roles=True fails."""
+        r = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+        )
+        assert r.success is False
+        assert "allowed_roles" in r.message
+
+    def test_keep_allowed_roles_preserves_existing(self, session_tools):
+        """keep_allowed_roles=True preserves the list across update."""
         # Initial create
-        session_tools.upsert_identity(
-            identity_name="ident-1",
-            allowed_roles=["proposer", "reviewer"],
-            default_role="proposer",
-            display_name="Original",
-            notes="orig notes",
-        )
-
-        # Update only default_role; other fields preserved
-        result = session_tools.upsert_identity(
-            identity_name="ident-1",
-            default_role="reviewer",
-        )
-        assert result.success is True
-        assert result.created is False
-        assert result.identity.allowed_roles == ["proposer", "reviewer"]
-        assert result.identity.default_role == "reviewer"
-        assert result.identity.display_name == "Original"
-        assert result.identity.notes == "orig notes"
-
-        # Empty list explicitly clears
-        cleared = session_tools.upsert_identity(
-            identity_name="ident-1",
-            allowed_roles=[],
-        )
-        assert cleared.identity.allowed_roles == []
-
-    def test_upsert_identity_requires_name(self, session_tools):
-        """Empty identity_name fails fast."""
-        result = session_tools.upsert_identity(identity_name="")
-        assert result.success is False
-
-    def test_upsert_identity_preserves_created_at(self, session_tools):
-        """Updating an existing identity keeps the original created_at."""
         first = session_tools.upsert_identity(
-            identity_name="ident-2", default_role="proposer",
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            allowed_roles=["proposer", "reviewer"],
+            persona_description="orig",
         )
+        assert first.success is True
         original_created = first.identity.created_at
 
-        second = session_tools.upsert_identity(
-            identity_name="ident-2", default_role="reviewer",
+        # Update with keep_allowed_roles, change persona_description
+        updated = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            keep_allowed_roles=True,
+            persona_description="new",
         )
-        assert second.identity.created_at == original_created
-        assert second.identity.updated_at >= original_created
+        assert updated.success is True
+        assert updated.created is False
+        assert updated.identity.allowed_roles == ["proposer", "reviewer"]
+        assert updated.identity.persona_description == "new"
+        # created_at preserved
+        assert updated.identity.created_at == original_created
+
+    def test_keep_allowed_roles_and_list_conflict(self, session_tools):
+        """Passing both allowed_roles and keep_allowed_roles=True fails."""
+        r = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            allowed_roles=["proposer"],
+            keep_allowed_roles=True,
+        )
+        assert r.success is False
+        assert "keep_allowed_roles" in r.message and "allowed_roles" in r.message
+
+    def test_keep_allowed_roles_on_new_identity_fails(self, session_tools):
+        """keep_allowed_roles=True on a new identity fails (nothing to keep)."""
+        r = session_tools.upsert_identity(
+            identity_name="never-existed",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            keep_allowed_roles=True,
+        )
+        assert r.success is False
+        assert "keep_allowed_roles" in r.message
+
+    def test_explicit_empty_allowed_roles_legal(self, session_tools):
+        """allowed_roles=[] is a legal explicit declaration of zero roles."""
+        r = session_tools.upsert_identity(
+            identity_name="silent-actor",
+            embodiment="web_ai_chat",
+            independence_class="independent",
+            allowed_roles=[],
+        )
+        assert r.success is True
+        assert r.identity.allowed_roles == []
+
+    def test_persona_description_preserve_on_none(self, session_tools):
+        """persona_description=None preserves existing on update."""
+        session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            allowed_roles=["proposer"],
+            persona_description="original",
+        )
+        updated = session_tools.upsert_identity(
+            identity_name="ident-1",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            allowed_roles=["proposer"],
+            # persona_description omitted -> preserve
+        )
+        assert updated.identity.persona_description == "original"
+
+    def test_upsert_identity_requires_name(self, session_tools):
+        """Empty identity_name fails fast (before enum validation)."""
+        result = session_tools.upsert_identity(
+            identity_name="",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            allowed_roles=["proposer"],
+        )
+        assert result.success is False
 
     def test_list_context_authors_joins_identity(self, session_tools, project_tools):
         """list_context_authors attaches the identity record when one exists."""
@@ -914,14 +1016,15 @@ class TestUpsertIdentity:
 
         # Register identity, then save a session under the same author
         session_tools.upsert_identity(
-            identity_name="claude.ai-heisenberg",
-            allowed_roles=["proposer", "reviewer"],
-            default_role="proposer",
-            display_name="Heisenberg",
+            identity_name="Heisenberg",
+            embodiment="terminal_coding_agent",
+            independence_class="main-chain",
+            allowed_roles=["proposer", "reviewer", "implementer"],
+            persona_description="Heisenberg",
         )
         session_tools.save_session(
             project="join_proj", summary="design", current_task="T-arch",
-            author="claude.ai-heisenberg",
+            author="Heisenberg",
         )
         # Save a second author with no identity record
         session_tools.save_session(
@@ -933,11 +1036,12 @@ class TestUpsertIdentity:
         assert result.success is True
 
         by_author = {a.author: a for a in result.authors}
-        ident_entry = by_author["claude.ai-heisenberg"]
+        ident_entry = by_author["Heisenberg"]
         assert ident_entry.identity is not None
-        assert ident_entry.identity.allowed_roles == ["proposer", "reviewer"]
-        assert ident_entry.identity.default_role == "proposer"
-        assert ident_entry.identity.display_name == "Heisenberg"
+        assert ident_entry.identity.allowed_roles == ["proposer", "reviewer", "implementer"]
+        assert ident_entry.identity.embodiment == "terminal_coding_agent"
+        assert ident_entry.identity.independence_class == "main-chain"
+        assert ident_entry.identity.persona_description == "Heisenberg"
 
         no_ident_entry = by_author["claude-code"]
         assert no_ident_entry.identity is None
@@ -948,17 +1052,21 @@ class TestUpsertIdentity:
         self._setup(project_tools, "cp_b")
 
         session_tools.upsert_identity(
-            identity_name="claude.ai-heisenberg",
+            identity_name="Heisenberg",
+            embodiment="terminal_coding_agent",
+            independence_class="main-chain",
             allowed_roles=["proposer"],
         )
         session_tools.save_session(
-            project="cp_a", summary="a", author="claude.ai-heisenberg",
+            project="cp_a", summary="a", author="Heisenberg",
         )
         session_tools.save_session(
-            project="cp_b", summary="b", author="claude.ai-heisenberg",
+            project="cp_b", summary="b", author="Heisenberg",
         )
 
         a = session_tools.list_context_authors(project="cp_a").authors[0]
         b = session_tools.list_context_authors(project="cp_b").authors[0]
         assert a.identity is not None and a.identity.allowed_roles == ["proposer"]
         assert b.identity is not None and b.identity.allowed_roles == ["proposer"]
+        assert a.identity.embodiment == "terminal_coding_agent"
+        assert a.identity.independence_class == "main-chain"

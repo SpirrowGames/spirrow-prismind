@@ -187,7 +187,12 @@ class TestUpdateTaskStatusInputSchema:
 
 
 class TestUpsertIdentityDispatch:
-    """Verify upsert_identity dispatch forwards all fields and shapes the response."""
+    """Verify upsert_identity dispatch forwards all fields and shapes the response.
+
+    Shape locked by msg-002 §1.1 / msg-005 D-5 (α): embodiment and
+    independence_class are required (enum-validated), allowed_roles is
+    required unless keep_allowed_roles=True.
+    """
 
     def test_dispatch_forwards_fields_and_returns_identity(self):
         from spirrow_prismind.models import IdentityInfo, UpsertIdentityResult
@@ -199,12 +204,12 @@ class TestUpsertIdentityDispatch:
         server._session_tools = session
 
         identity = IdentityInfo(
-            identity_name="ident-1",
+            identity_name="Heisenberg",
             user="test_user",
-            display_name="Test",
-            allowed_roles=["proposer", "reviewer"],
-            default_role="proposer",
-            notes="hi",
+            allowed_roles=["proposer", "reviewer", "implementer"],
+            embodiment="terminal_coding_agent",
+            independence_class="main-chain",
+            persona_description="Heisenberg",
             created_at="2026-05-28T00:00:00",
             updated_at="2026-05-28T00:00:01",
         )
@@ -216,11 +221,11 @@ class TestUpsertIdentityDispatch:
             server._dispatch_tool(
                 "upsert_identity",
                 {
-                    "identity_name": "ident-1",
-                    "allowed_roles": ["proposer", "reviewer"],
-                    "default_role": "proposer",
-                    "display_name": "Test",
-                    "notes": "hi",
+                    "identity_name": "Heisenberg",
+                    "embodiment": "terminal_coding_agent",
+                    "independence_class": "main-chain",
+                    "allowed_roles": ["proposer", "reviewer", "implementer"],
+                    "persona_description": "Heisenberg",
                     "user": "test_user",
                 },
             )
@@ -229,28 +234,66 @@ class TestUpsertIdentityDispatch:
         session.upsert_identity.assert_called_once()
         kwargs = session.upsert_identity.call_args.kwargs
         for field in (
-            "identity_name", "allowed_roles", "default_role",
-            "display_name", "notes", "user",
+            "identity_name", "embodiment", "independence_class",
+            "allowed_roles", "keep_allowed_roles", "persona_description", "user",
         ):
             assert field in kwargs, f"upsert_identity dispatch dropped {field!r}"
 
         assert result["success"] is True
         assert result["created"] is True
-        assert result["identity"]["identity_name"] == "ident-1"
-        assert result["identity"]["allowed_roles"] == ["proposer", "reviewer"]
+        assert result["identity"]["identity_name"] == "Heisenberg"
+        assert result["identity"]["embodiment"] == "terminal_coding_agent"
+        assert result["identity"]["independence_class"] == "main-chain"
+        assert result["identity"]["allowed_roles"] == ["proposer", "reviewer", "implementer"]
+
+    def test_dispatch_defaults_keep_allowed_roles_to_false(self):
+        """keep_allowed_roles is forwarded as False when omitted from args."""
+        from spirrow_prismind.models import UpsertIdentityResult
+
+        server = PrismindServer()
+        server._initialized = True
+        server._project_tools = MagicMock()
+        session = MagicMock()
+        server._session_tools = session
+        session.upsert_identity.return_value = UpsertIdentityResult(
+            success=True, identity=None, created=True, message="ok",
+        )
+
+        asyncio.run(
+            server._dispatch_tool(
+                "upsert_identity",
+                {
+                    "identity_name": "Heisenberg",
+                    "embodiment": "terminal_coding_agent",
+                    "independence_class": "main-chain",
+                    "allowed_roles": ["proposer"],
+                },
+            )
+        )
+        assert session.upsert_identity.call_args.kwargs["keep_allowed_roles"] is False
 
     def test_input_schema_declares_required_and_optional_fields(self):
         schema = _tool_schema("upsert_identity")
         properties = schema.get("properties", {})
         for field in (
-            "identity_name", "allowed_roles", "default_role",
-            "display_name", "notes", "user",
+            "identity_name", "embodiment", "independence_class",
+            "allowed_roles", "keep_allowed_roles", "persona_description", "user",
         ):
             assert field in properties, (
                 f"upsert_identity input schema must declare {field!r}. "
                 f"Current schema lists {sorted(properties.keys())}."
             )
-        assert schema.get("required") == ["identity_name"]
+        assert schema.get("required") == [
+            "identity_name", "embodiment", "independence_class",
+        ]
+        # enum schemas pinned (so a future re-write of the constants
+        # propagates a test failure if it diverges from the spec)
+        assert properties["embodiment"]["enum"] == [
+            "web_ai_chat", "terminal_coding_agent",
+        ]
+        assert properties["independence_class"]["enum"] == [
+            "main-chain", "independent", "human",
+        ]
 
 
 class TestListContextAuthorsDispatchIdentity:
@@ -274,9 +317,10 @@ class TestListContextAuthorsDispatchIdentity:
         identity = IdentityInfo(
             identity_name="ident-1",
             user="u",
-            display_name="Disp",
             allowed_roles=["proposer"],
-            default_role="proposer",
+            embodiment="web_ai_chat",
+            independence_class="main-chain",
+            persona_description="Disp",
         )
         session.list_context_authors.return_value = ContextAuthorsResult(
             success=True,
@@ -310,7 +354,8 @@ class TestListContextAuthorsDispatchIdentity:
         with_ident = result["authors"][0]
         assert with_ident["identity"] is not None
         assert with_ident["identity"]["allowed_roles"] == ["proposer"]
-        assert with_ident["identity"]["default_role"] == "proposer"
+        assert with_ident["identity"]["embodiment"] == "web_ai_chat"
+        assert with_ident["identity"]["independence_class"] == "main-chain"
 
         without_ident = result["authors"][1]
         assert without_ident["identity"] is None
