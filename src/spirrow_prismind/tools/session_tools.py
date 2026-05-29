@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ..integrations import (
-    EMBODIMENT_VALUES,
     GoogleSheetsClient,
     INDEPENDENCE_CLASS_VALUES,
     Identity,
@@ -203,6 +202,7 @@ class SessionTools:
         project: Optional[str] = None,
         user: Optional[str] = None,
         author: Optional[str] = None,
+        embodiment: Optional[str] = None,
     ) -> EndSessionResult:
         """End the session and save state.
 
@@ -213,6 +213,8 @@ class SessionTools:
             notes: Notes for next session
             project: Project ID (uses current if None)
             user: User ID (uses default if None)
+            embodiment: Self-declared runtime form (ADR-2026-05-29-12).
+                ``None`` preserves the existing SessionState.embodiment.
 
         Returns:
             EndSessionResult
@@ -229,13 +231,13 @@ class SessionTools:
                 saved_to=[],
                 message="アクティブなセッションがありません。",
             )
-        
+
         # Calculate duration
         if self._session_start:
             duration = datetime.now() - self._session_start
         else:
             duration = timedelta(0)
-        
+
         # Load existing state
         existing_state = self.memory.get_session_state(project, user, author)
 
@@ -251,6 +253,11 @@ class SessionTools:
             notes=notes if notes is not None else "",
             last_summary=summary or "",
             next_action=next_action or "",
+            embodiment=(
+                embodiment
+                if embodiment is not None
+                else (existing_state.embodiment if existing_state else None)
+            ),
         )
         
         # Save to Memory
@@ -290,6 +297,7 @@ class SessionTools:
         project: Optional[str] = None,
         user: Optional[str] = None,
         author: Optional[str] = None,
+        embodiment: Optional[str] = None,
     ) -> SaveSessionResult:
         """Save session state without ending.
 
@@ -302,6 +310,8 @@ class SessionTools:
             current_task: Update current task
             project: Project ID (uses current if None)
             user: User ID (uses default if None)
+            embodiment: Self-declared runtime form (ADR-2026-05-29-12).
+                ``None`` preserves the existing SessionState.embodiment.
 
         Returns:
             SaveSessionResult
@@ -333,6 +343,11 @@ class SessionTools:
             notes=notes if notes is not None else (existing_state.notes if existing_state else ""),
             last_summary=summary if summary is not None else (existing_state.last_summary if existing_state else ""),
             next_action=next_action if next_action is not None else (existing_state.next_action if existing_state else ""),
+            embodiment=(
+                embodiment
+                if embodiment is not None
+                else (existing_state.embodiment if existing_state else None)
+            ),
         )
         
         # Save to Memory
@@ -363,6 +378,7 @@ class SessionTools:
         project: Optional[str] = None,
         user: Optional[str] = None,
         author: Optional[str] = None,
+        embodiment: Optional[str] = None,
     ) -> SaveSessionResult:
         """Update progress in the session.
 
@@ -373,6 +389,8 @@ class SessionTools:
             blockers: Updated blockers
             project: Project ID (uses current if None)
             user: User ID
+            embodiment: Self-declared runtime form (ADR-2026-05-29-12).
+                ``None`` preserves the existing SessionState.embodiment.
 
         Returns:
             SaveSessionResult
@@ -406,6 +424,11 @@ class SessionTools:
             notes=existing_state.notes if existing_state else "",
             last_summary=existing_state.last_summary if existing_state else "",
             next_action=existing_state.next_action if existing_state else "",
+            embodiment=(
+                embodiment
+                if embodiment is not None
+                else (existing_state.embodiment if existing_state else None)
+            ),
         )
         
         # Save
@@ -846,11 +869,16 @@ class SessionTools:
                 identity_info = None
                 ident_raw = entry.get("identity")
                 if isinstance(ident_raw, dict):
+                    # ``embodiment`` defaults to None when the key is absent
+                    # (case 3 human-omit applied upstream at
+                    # ``_identity_to_response_dict``); the IdentityInfo
+                    # serializer (``to_dict``) re-applies the omit for the
+                    # outbound dispatch payload.
                     identity_info = IdentityInfo(
                         identity_name=ident_raw.get("identity_name", ""),
                         user=ident_raw.get("user", ""),
                         allowed_roles=list(ident_raw.get("allowed_roles") or []),
-                        embodiment=ident_raw.get("embodiment", ""),
+                        embodiment=ident_raw.get("embodiment"),
                         independence_class=ident_raw.get("independence_class", ""),
                         persona_description=ident_raw.get("persona_description", ""),
                         created_at=ident_raw.get("created_at", ""),
@@ -883,30 +911,28 @@ class SessionTools:
     def upsert_identity(
         self,
         identity_name: str,
-        embodiment: str,
         independence_class: str,
         allowed_roles: Optional[list[str]] = None,
         keep_allowed_roles: bool = False,
         persona_description: Optional[str] = None,
+        embodiment: Optional[str] = None,
         user: Optional[str] = None,
     ) -> UpsertIdentityResult:
         """Create or update an identity record (cross-project actor declaration).
 
         Identity records live in a separate key space from session state
         (``prismind:identity:{user}:{identity_name}``), so the actor's static
-        attributes (allowed_roles / embodiment / independence_class /
-        persona_description) survive across projects and contexts.
-        ``identity_name`` is the same value ``SessionState.author`` uses,
-        which lets ``list_context_authors`` join the identity record onto
-        each author entry.
+        attributes (allowed_roles / independence_class / persona_description)
+        survive across projects and contexts. ``identity_name`` is the same
+        value ``SessionState.author`` uses, which lets ``list_context_authors``
+        join the identity record onto each author entry.
 
         Required-field semantics realize ADR-2026-05-27-09 D-3's
         persona-continuity gate at the API level (msg-001 §C-4
         "書き忘れ不能" guarantee, locked by msg-005 D-5 (α)):
 
-        - ``embodiment`` and ``independence_class`` are required on every
-          upsert (they declare what the actor *is*; you re-state them rather
-          than risk silent drift).
+        - ``independence_class`` is required on every upsert (re-declared,
+          not preserved).
         - ``allowed_roles`` is required unless ``keep_allowed_roles=True``,
           which explicitly preserves the existing list. Passing both
           ``allowed_roles`` and ``keep_allowed_roles=True`` is a conflict.
@@ -918,13 +944,17 @@ class SessionTools:
         - ``persona_description`` is optional; pass ``None`` (or omit) to
           preserve the existing value.
 
-        Enum validation: ``embodiment`` ∈ ``EMBODIMENT_VALUES``,
-        ``independence_class`` ∈ ``INDEPENDENCE_CLASS_VALUES``. Empty strings
-        and unknown values are rejected (msg-002 §1.4).
+        ``embodiment`` is **DEPRECATED** by ADR-2026-05-29-12 and is now
+        optional (default ``None``). It is no longer enum-validated at
+        upsert time; runtime self-declaration on the five APIs (Magickit-
+        side) is the new source. The field is preserved for the staged
+        migration window (step (i) of the deprecation plan).
+
+        Enum validation: ``independence_class`` ∈ ``INDEPENDENCE_CLASS_VALUES``.
+        Empty strings and unknown values are rejected.
 
         Args:
             identity_name: Stable identity slug (e.g. "Heisenberg").
-            embodiment: Runtime form. Required.
             independence_class: Actor's gating class for D-3. Required.
             allowed_roles: Roles this identity may assume (e.g.
                 ["proposer", "reviewer"]). Required unless
@@ -933,6 +963,8 @@ class SessionTools:
                 Mutually exclusive with ``allowed_roles``.
             persona_description: Optional human-readable persona note.
                 ``None`` preserves the existing value.
+            embodiment: DEPRECATED -- see ADR-2026-05-29-12. ``None`` is
+                the recommended default; will be removed in step (iii).
             user: Owner. Defaults to the configured user_name.
 
         Returns:
@@ -946,14 +978,6 @@ class SessionTools:
                 success=False, message="identity_name が指定されていません。",
             )
 
-        if embodiment not in EMBODIMENT_VALUES:
-            return UpsertIdentityResult(
-                success=False,
-                message=(
-                    f"embodiment は {list(EMBODIMENT_VALUES)} のいずれかが必須です "
-                    f"(指定値: {embodiment!r})。"
-                ),
-            )
         if independence_class not in INDEPENDENCE_CLASS_VALUES:
             return UpsertIdentityResult(
                 success=False,

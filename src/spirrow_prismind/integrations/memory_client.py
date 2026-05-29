@@ -42,7 +42,15 @@ class MemoryOperationResult:
 
 @dataclass
 class SessionState:
-    """Session state stored in memory."""
+    """Session state stored in memory.
+
+    ``embodiment`` (ADR-2026-05-29-12) is the self-declared runtime form of
+    the calling agent at the moment of the latest checkpoint / resume. It
+    is per-session-meta (overwritten on each checkpoint), not a per-call
+    history; the history of declared embodiments lives on chatroom msgs
+    (Conclair side, also per ADR-12). ``None`` means the field was not
+    declared on the latest checkpoint.
+    """
     project: str
     user: str
     author: str = ""
@@ -54,6 +62,7 @@ class SessionState:
     last_summary: str = ""
     next_action: str = ""
     updated_at: str = ""
+    embodiment: Optional[str] = None  # ADR-2026-05-29-12 self-declared
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -74,6 +83,7 @@ class SessionState:
             last_summary=data.get("last_summary", ""),
             next_action=data.get("next_action", ""),
             updated_at=data.get("updated_at", ""),
+            embodiment=data.get("embodiment"),
         )
 
 
@@ -96,8 +106,15 @@ class CurrentProject:
         )
 
 
-EMBODIMENT_VALUES = ("web_ai_chat", "terminal_coding_agent")
+EMBODIMENT_VALUES = ("web_ai_chat", "terminal_coding_agent", "unknown")
 INDEPENDENCE_CLASS_VALUES = ("main-chain", "independent", "human")
+
+# Identity_names whose records must omit ``embodiment`` from response payloads
+# (ADR-2026-05-29-12 §3 "case 3" -- response-side omit). The human identity
+# does not have an operational embodiment (humans never act as the calling
+# agent on Magickit / Mindwire), so the field is structurally absent rather
+# than null. Test: the human response must NOT contain the embodiment key.
+HUMAN_IDENTITY_NAMES = ("human",)
 
 
 @dataclass
@@ -105,14 +122,16 @@ class Identity:
     """Stable, cross-project identity record for an actor (e.g. an AI role).
 
     Identity is a separate key space from SessionState so that the actor's
-    static attributes (allowed_roles / embodiment / independence_class /
+    static attributes (allowed_roles / independence_class /
     persona_description) travel with the actor rather than per-context, and
     the same identity can hold contexts under multiple projects without
     duplicating these declarations on each save.
 
     Shape locked by msg-002 §1.1 / msg-005 D-5 (α) on
-    T-magickit-identity-extension. The four schema fields realize
-    ADR-2026-05-27-09 D-3's persona-continuity gate at the API level:
+    T-magickit-identity-extension, and revised by ADR-2026-05-29-12 on
+    T-embodiment-self-declared (mindwire). The remaining schema fields
+    realize ADR-2026-05-27-09 D-3's persona-continuity gate at the
+    API level:
 
     - ``allowed_roles`` -- which roles this actor may assume; enforced by
       Magickit on chatroom posts (P2 / P3). An empty list (``[]``) is a
@@ -120,12 +139,19 @@ class Identity:
       -- distinct from "preserve existing" (see ``keep_allowed_roles`` on
       ``upsert_identity``). It is an unusual but legal state; with role
       checks live, the actor will be rejected by every role-bearing post.
-    - ``embodiment`` -- runtime form (web_ai_chat / terminal_coding_agent).
-      The two-way enum is intentional per §0: model identity is *not*
-      surfaced, only the operational mode that's visible to other actors.
     - ``independence_class`` -- main-chain / independent / human. Required
       on every upsert ("書き忘れ不能" guarantee from msg-001 §C-4).
     - ``persona_description`` -- optional human-readable persona note.
+    - ``embodiment`` -- **DEPRECATED** by ADR-2026-05-29-12. Runtime form
+      (``web_ai_chat`` / ``terminal_coding_agent`` / ``unknown``) is now
+      self-declared per-operation on the five APIs (checkpoint / resume /
+      chatroom_post_message / chatroom_open_thread / chatroom_close_thread)
+      rather than fixed on the identity record. The field remains in the
+      schema as ``Optional[str]`` for the transition window (step (i) of
+      the staged migration; step (ii) is callsite removal, step (iii)
+      is column removal). On existing AI records the value is migrated to
+      ``None``; on the human record the field is omitted from API
+      responses entirely (response-side omit, case 3).
 
     The persisted key is ``prismind:identity:{user}:{identity_name}``.
     ``identity_name`` is the same string that ``SessionState.author`` uses,
@@ -135,7 +161,7 @@ class Identity:
     identity_name: str
     user: str
     allowed_roles: list[str] = field(default_factory=list)
-    embodiment: str = ""
+    embodiment: Optional[str] = None  # DEPRECATED -- ADR-2026-05-29-12
     independence_class: str = ""
     persona_description: str = ""
     created_at: str = ""
@@ -147,7 +173,12 @@ class Identity:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Identity":
-        """Create from dictionary. Unknown keys are ignored."""
+        """Create from dictionary. Unknown keys are ignored.
+
+        ``embodiment`` is preserved as-is whether None or string; pre-ADR-12
+        records that stored ``""`` are kept as ``""`` rather than rewritten,
+        since the migration script handles the explicit null update.
+        """
         roles = data.get("allowed_roles") or []
         if isinstance(roles, str):
             roles = [r.strip() for r in roles.split(",") if r.strip()]
@@ -155,12 +186,32 @@ class Identity:
             identity_name=data.get("identity_name", ""),
             user=data.get("user", ""),
             allowed_roles=list(roles),
-            embodiment=data.get("embodiment", ""),
+            embodiment=data.get("embodiment"),
             independence_class=data.get("independence_class", ""),
             persona_description=data.get("persona_description", ""),
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
         )
+
+
+def _identity_to_response_dict(identity: "Identity") -> dict[str, Any]:
+    """Serialize an Identity record for outbound API responses.
+
+    Applies ADR-2026-05-29-12 §3 "case 3" response-side omit: for human
+    identities, the ``embodiment`` key is structurally absent from the
+    response (not ``None``). Callers can distinguish "AI with no declared
+    embodiment yet" (key present, value None) from "human, structurally
+    not applicable" (key absent). The on-disk schema is unchanged; the
+    omit happens only at the response boundary.
+
+    Pinned by a test that fails if the human response contains the
+    ``embodiment`` key, to prevent silent regression when later code
+    refactors the serialization path.
+    """
+    data = identity.to_dict()
+    if identity.identity_name in HUMAN_IDENTITY_NAMES:
+        data.pop("embodiment", None)
+    return data
 
 
 # ===================
@@ -1069,13 +1120,13 @@ class MemoryClient:
                 "identity": None,
             }
             # Join identity record if present. Lookup is cheap (key-based) and
-            # lets callers see allowed_roles / display_name without a second
-            # round-trip. Authors that pre-date identity records simply carry
-            # identity=None.
+            # lets callers see allowed_roles / persona_description without a
+            # second round-trip. Authors that pre-date identity records simply
+            # carry identity=None.
             if s.author and s.user:
                 ident = self.get_identity(s.user, s.author)
                 if ident is not None:
-                    entry["identity"] = ident.to_dict()
+                    entry["identity"] = _identity_to_response_dict(ident)
             authors.append(entry)
 
         authors.sort(key=lambda a: a["updated_at"] or "", reverse=True)

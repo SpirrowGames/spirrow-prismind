@@ -207,7 +207,7 @@ class TestUpsertIdentityDispatch:
             identity_name="Heisenberg",
             user="test_user",
             allowed_roles=["proposer", "reviewer", "implementer"],
-            embodiment="terminal_coding_agent",
+            embodiment=None,  # ADR-12 deprecated; default None
             independence_class="main-chain",
             persona_description="Heisenberg",
             created_at="2026-05-28T00:00:00",
@@ -222,7 +222,6 @@ class TestUpsertIdentityDispatch:
                 "upsert_identity",
                 {
                     "identity_name": "Heisenberg",
-                    "embodiment": "terminal_coding_agent",
                     "independence_class": "main-chain",
                     "allowed_roles": ["proposer", "reviewer", "implementer"],
                     "persona_description": "Heisenberg",
@@ -242,7 +241,8 @@ class TestUpsertIdentityDispatch:
         assert result["success"] is True
         assert result["created"] is True
         assert result["identity"]["identity_name"] == "Heisenberg"
-        assert result["identity"]["embodiment"] == "terminal_coding_agent"
+        # ADR-12: embodiment is now Optional on the response (None for fresh records).
+        assert result["identity"]["embodiment"] is None
         assert result["identity"]["independence_class"] == "main-chain"
         assert result["identity"]["allowed_roles"] == ["proposer", "reviewer", "implementer"]
 
@@ -264,7 +264,6 @@ class TestUpsertIdentityDispatch:
                 "upsert_identity",
                 {
                     "identity_name": "Heisenberg",
-                    "embodiment": "terminal_coding_agent",
                     "independence_class": "main-chain",
                     "allowed_roles": ["proposer"],
                 },
@@ -273,6 +272,8 @@ class TestUpsertIdentityDispatch:
         assert session.upsert_identity.call_args.kwargs["keep_allowed_roles"] is False
 
     def test_input_schema_declares_required_and_optional_fields(self):
+        """ADR-2026-05-29-12 removed ``embodiment`` from required and kept
+        ``identity_name`` + ``independence_class``."""
         schema = _tool_schema("upsert_identity")
         properties = schema.get("properties", {})
         for field in (
@@ -284,15 +285,15 @@ class TestUpsertIdentityDispatch:
                 f"Current schema lists {sorted(properties.keys())}."
             )
         assert schema.get("required") == [
-            "identity_name", "embodiment", "independence_class",
+            "identity_name", "independence_class",
         ]
-        # enum schemas pinned (so a future re-write of the constants
-        # propagates a test failure if it diverges from the spec)
-        assert properties["embodiment"]["enum"] == [
-            "web_ai_chat", "terminal_coding_agent",
-        ]
+        # independence_class enum pinned; embodiment is deprecated and now
+        # carries the ADR-12 self-declared enum (3 values + null).
         assert properties["independence_class"]["enum"] == [
             "main-chain", "independent", "human",
+        ]
+        assert properties["embodiment"]["enum"] == [
+            "web_ai_chat", "terminal_coding_agent", "unknown", None,
         ]
 
 
@@ -318,7 +319,7 @@ class TestListContextAuthorsDispatchIdentity:
             identity_name="ident-1",
             user="u",
             allowed_roles=["proposer"],
-            embodiment="web_ai_chat",
+            embodiment=None,  # ADR-12: deprecated, default None
             independence_class="main-chain",
             persona_description="Disp",
         )
@@ -354,7 +355,8 @@ class TestListContextAuthorsDispatchIdentity:
         with_ident = result["authors"][0]
         assert with_ident["identity"] is not None
         assert with_ident["identity"]["allowed_roles"] == ["proposer"]
-        assert with_ident["identity"]["embodiment"] == "web_ai_chat"
+        # ADR-12: embodiment defaults to None on the identity record.
+        assert with_ident["identity"]["embodiment"] is None
         assert with_ident["identity"]["independence_class"] == "main-chain"
 
         without_ident = result["authors"][1]
