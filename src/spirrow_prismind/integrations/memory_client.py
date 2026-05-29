@@ -115,7 +115,11 @@ class Identity:
     ADR-2026-05-27-09 D-3's persona-continuity gate at the API level:
 
     - ``allowed_roles`` -- which roles this actor may assume; enforced by
-      Magickit on chatroom posts (P2 / P3).
+      Magickit on chatroom posts (P2 / P3). An empty list (``[]``) is a
+      legal explicit declaration meaning "this actor may assume no roles"
+      -- distinct from "preserve existing" (see ``keep_allowed_roles`` on
+      ``upsert_identity``). It is an unusual but legal state; with role
+      checks live, the actor will be rejected by every role-bearing post.
     - ``embodiment`` -- runtime form (web_ai_chat / terminal_coding_agent).
       The two-way enum is intentional per §0: model identity is *not*
       surfaced, only the operational mode that's visible to other actors.
