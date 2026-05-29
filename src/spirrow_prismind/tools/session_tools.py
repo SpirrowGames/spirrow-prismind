@@ -910,6 +910,11 @@ class SessionTools:
         - ``allowed_roles`` is required unless ``keep_allowed_roles=True``,
           which explicitly preserves the existing list. Passing both
           ``allowed_roles`` and ``keep_allowed_roles=True`` is a conflict.
+          ``allowed_roles=[]`` is a legal explicit declaration meaning
+          "this actor may assume no roles" (distinct from "preserve" --
+          use ``keep_allowed_roles=True`` for that). It is unusual but
+          legal; once role checks are live (P2), every role-bearing post
+          from such an actor will be rejected.
         - ``persona_description`` is optional; pass ``None`` (or omit) to
           preserve the existing value.
 

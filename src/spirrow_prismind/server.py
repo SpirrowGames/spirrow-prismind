@@ -329,7 +329,7 @@ TOOLS = [
                 "allowed_roles": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Roles this identity may assume (e.g. ['proposer', 'reviewer']). Required unless keep_allowed_roles=True. Magickit enforces; Prismind only persists.",
+                    "description": "Roles this identity may assume (e.g. ['proposer', 'reviewer']). Required unless keep_allowed_roles=True. An empty list [] is a legal explicit declaration of 'no allowed roles' (distinct from preserve -- use keep_allowed_roles=True for that). Magickit enforces; Prismind only persists.",
                 },
                 "keep_allowed_roles": {
                     "type": "boolean",
