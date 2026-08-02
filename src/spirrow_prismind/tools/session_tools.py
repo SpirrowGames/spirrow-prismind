@@ -19,6 +19,7 @@ from ..models import (
     DeleteSessionResult,
     DocReference,
     EndSessionResult,
+    GetIdentityResult,
     IdentityInfo,
     ListSessionsResult,
     SaveSessionResult,
@@ -907,6 +908,77 @@ class SessionTools:
                 project=project,
                 message=f"コンテキストauthor一覧の取得に失敗しました: {e}",
             )
+
+    def get_identity(
+        self,
+        identity_name: str,
+        user: Optional[str] = None,
+    ) -> GetIdentityResult:
+        """Look up a single identity record by name (cross-project).
+
+        Exists because ``list_context_authors`` cannot answer this question:
+        that call is *project-scoped* and enumerates SessionState partitions,
+        so an identity that is registered but has no saved session state in
+        the queried project is simply absent from its output. Magickit's
+        role × allowed_roles gate (T-magickit-identity-extension msg-002
+        §2.3 / msg-017 I-2) must resolve ``allowed_roles`` for **any**
+        author, including one that has never checkpointed in that project --
+        e.g. ``Einstein`` in ``spirrow-magickit``. Resolving via
+        ``list_context_authors`` would report such an actor as "unregistered"
+        and silently skip the check, which is exactly the failure mode the
+        gate exists to prevent.
+
+        Reads only; identity records are written by ``upsert_identity``.
+
+        Args:
+            identity_name: Stable identity slug (e.g. "Einstein"). Same value
+                ``SessionState.author`` / ``upsert_identity`` use.
+            user: Owner. Defaults to the configured ``user_name`` -- the same
+                fallback ``upsert_identity`` applies, so a record written
+                without an explicit user is readable without one.
+
+        Returns:
+            GetIdentityResult. A missing record is ``success=True,
+            found=False`` (a well-formed negative answer), NOT a failure.
+            ``success=False`` is reserved for a lookup that could not be
+            performed, so callers can fail closed on it.
+        """
+        if not identity_name:
+            return GetIdentityResult(
+                success=False, message="identity_name が指定されていません。",
+            )
+
+        owner = user or self.user_name
+        try:
+            identity = self.memory.get_identity(owner, identity_name)
+        except Exception as e:
+            logger.error(f"Failed to get identity: {e}")
+            return GetIdentityResult(
+                success=False, message=f"identityの取得に失敗しました: {e}",
+            )
+
+        if identity is None:
+            return GetIdentityResult(
+                success=True,
+                found=False,
+                message=f"identity '{identity_name}' は未登録です。",
+            )
+
+        return GetIdentityResult(
+            success=True,
+            found=True,
+            identity=IdentityInfo(
+                identity_name=identity.identity_name,
+                user=identity.user,
+                allowed_roles=list(identity.allowed_roles),
+                embodiment=identity.embodiment,
+                independence_class=identity.independence_class,
+                persona_description=identity.persona_description,
+                created_at=identity.created_at,
+                updated_at=identity.updated_at,
+            ),
+            message=f"identity '{identity_name}' を取得しました。",
+        )
 
     def upsert_identity(
         self,

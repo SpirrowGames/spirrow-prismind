@@ -316,6 +316,34 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_identity",
+        description=(
+            "Look up ONE identity record by name (cross-project, read-only). "
+            "Use this -- not list_context_authors -- when you need a specific actor's "
+            "allowed_roles / independence_class. list_context_authors is project-scoped "
+            "and enumerates saved session state, so an identity that is registered but "
+            "has never checkpointed in that project is absent from its output; treating "
+            "that absence as 'unregistered' would silently skip Magickit's role x "
+            "allowed_roles check. Response distinguishes 'not registered' "
+            "(success=true, found=false) from 'lookup failed' (success=false) so callers "
+            "can fail closed on the latter."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "identity_name": {
+                    "type": "string",
+                    "description": "Stable identity slug (e.g. 'Einstein'). Same value as SessionState.author / upsert_identity.",
+                },
+                "user": {
+                    "type": "string",
+                    "description": "Owning user. Omit to use the configured user_name -- the same fallback upsert_identity applies, so a record written without an explicit user is readable without one.",
+                },
+            },
+            "required": ["identity_name"],
+        },
+    ),
+    Tool(
         name="upsert_identity",
         description=(
             "Create or update an identity record (cross-project actor declaration). "
@@ -1713,7 +1741,7 @@ class PrismindServer:
         google_required_tools = [
             "start_session", "end_session", "save_session", "update_session_progress",
             "list_sessions", "delete_session", "list_context_authors",
-            "upsert_identity", "update_summary",
+            "upsert_identity", "get_identity", "update_summary",
             "setup_project", "switch_project", "list_projects",
             "update_project", "delete_project", "sync_projects_from_drive",
             "get_document", "create_document", "update_document",
@@ -1870,6 +1898,24 @@ class PrismindServer:
                 ],
                 "total_count": result.total_count,
                 "message": result.message,
+            }
+
+        elif name == "get_identity":
+            # `user` IS threaded here (unlike list_context_authors above):
+            # identity records are keyed by (user, identity_name) and
+            # upsert_identity threads the caller's user, so a read that
+            # dropped it could miss the record it just wrote.
+            get_result = self._session_tools.get_identity(
+                identity_name=args["identity_name"],
+                user=args.get("user"),
+            )
+            return {
+                "success": get_result.success,
+                "found": get_result.found,
+                "identity": (
+                    get_result.identity.to_dict() if get_result.identity else None
+                ),
+                "message": get_result.message,
             }
 
         elif name == "upsert_identity":

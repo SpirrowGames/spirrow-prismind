@@ -231,3 +231,23 @@ class UpsertIdentityResult:
     identity: Optional[IdentityInfo] = None
     created: bool = False
     message: str = ""
+
+
+@dataclass
+class GetIdentityResult:
+    """Result of get_identity (single identity lookup by name).
+
+    ``found`` is the load-bearing field and is deliberately separate from
+    ``success``: Magickit's role × allowed_roles gate must distinguish
+    "this identity is not registered" (``success=True, found=False`` ->
+    legacy skip, the post is allowed) from "the lookup itself failed"
+    (``success=False`` -> the gate could not run, so the post must not
+    silently proceed as if it had). Collapsing the two into
+    ``identity is None`` would make an outage indistinguishable from a
+    permissive verdict.
+    """
+
+    success: bool
+    found: bool = False
+    identity: Optional[IdentityInfo] = None
+    message: str = ""

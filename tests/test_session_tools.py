@@ -1084,3 +1084,91 @@ class TestUpsertIdentity:
         assert a.identity is not None and a.identity.allowed_roles == ["proposer"]
         assert b.identity is not None and b.identity.allowed_roles == ["proposer"]
         assert a.identity.independence_class == "main-chain"
+
+    def test_get_identity_returns_registered_record(self, session_tools):
+        """get_identity resolves allowed_roles for a registered identity."""
+        session_tools.upsert_identity(
+            identity_name="Einstein",
+            independence_class="independent",
+            allowed_roles=["naysayer"],
+            persona_description="独立 naysayer",
+        )
+
+        result = session_tools.get_identity(identity_name="Einstein")
+
+        assert result.success is True
+        assert result.found is True
+        assert result.identity is not None
+        assert result.identity.allowed_roles == ["naysayer"]
+        assert result.identity.independence_class == "independent"
+
+    def test_get_identity_unregistered_is_a_negative_answer_not_a_failure(
+        self, session_tools
+    ):
+        """Missing record -> success=True, found=False.
+
+        The distinction is load-bearing: Magickit's role gate treats
+        found=False as "legacy / unregistered -> allow" but must fail
+        closed on success=False. If a missing record reported
+        success=False, every unregistered author would be blocked.
+        """
+        result = session_tools.get_identity(identity_name="NoSuchActor")
+
+        assert result.success is True
+        assert result.found is False
+        assert result.identity is None
+
+    def test_get_identity_requires_name(self, session_tools):
+        """Empty identity_name is a failed lookup, not an empty answer."""
+        result = session_tools.get_identity(identity_name="")
+
+        assert result.success is False
+        assert result.found is False
+
+    def test_get_identity_finds_actor_with_no_session_state(
+        self, session_tools, project_tools
+    ):
+        """The reason this tool exists (msg-017 I-2).
+
+        ``list_context_authors`` enumerates SessionState partitions for one
+        project, so an identity that never checkpointed there is absent from
+        it. ``get_identity`` must still resolve that actor -- otherwise the
+        role gate would silently skip exactly the actor it is meant to stop
+        (``Einstein`` has no saved context in ``spirrow-magickit``).
+        """
+        self._setup(project_tools, "gi_proj")
+        session_tools.upsert_identity(
+            identity_name="Einstein",
+            independence_class="independent",
+            allowed_roles=["naysayer"],
+        )
+        # Someone else has session state in the project; Einstein does not.
+        session_tools.save_session(
+            project="gi_proj", summary="impl", author="Heisenberg",
+        )
+
+        authors = session_tools.list_context_authors(project="gi_proj").authors
+        assert "Einstein" not in {a.author for a in authors}, (
+            "precondition: the project-scoped listing must NOT surface Einstein"
+        )
+
+        direct = session_tools.get_identity(identity_name="Einstein")
+        assert direct.found is True
+        assert direct.identity.allowed_roles == ["naysayer"]
+
+    def test_get_identity_reads_what_upsert_wrote_under_explicit_user(
+        self, session_tools
+    ):
+        """Read and write must agree on the (user, identity_name) key."""
+        session_tools.upsert_identity(
+            identity_name="Bohr",
+            independence_class="main-chain",
+            allowed_roles=["proposer"],
+            user="other_user",
+        )
+
+        assert session_tools.get_identity(
+            identity_name="Bohr", user="other_user"
+        ).found is True
+        # ...and the default-user lookup must not see another user's record.
+        assert session_tools.get_identity(identity_name="Bohr").found is False
