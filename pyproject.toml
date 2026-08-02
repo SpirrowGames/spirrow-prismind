@@ -15,7 +15,16 @@ authors = [
 keywords = ["mcp", "knowledge-management", "context", "ai"]
 
 dependencies = [
-    "mcp>=1.0.0",
+    # Upper bound is load-bearing, not caution. mcp 2.0 removed
+    # `Server.list_tools` and renamed `Tool.inputSchema` -> `input_schema`,
+    # so `PrismindServer` cannot even be constructed under 2.x
+    # (server.py:1366 raises AttributeError during handler registration).
+    # uv.lock already resolves 1.26.0 and that is what runs in production;
+    # the unbounded spec only ever diverged inside CI, which installs
+    # unpinned and so silently started testing a build that cannot run.
+    # Lifting this bound means migrating the server to the 2.x API -- a
+    # deliberate piece of work, not a resolver side effect.
+    "mcp>=1.0.0,<2",
     "google-api-python-client>=2.100.0",
     "google-auth-httplib2>=0.1.0",
     "google-auth-oauthlib>=1.0.0",
