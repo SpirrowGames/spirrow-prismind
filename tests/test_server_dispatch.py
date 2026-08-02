@@ -407,3 +407,75 @@ class TestUpdateTaskDispatchUnaffected:
             "project", "user",
         ):
             assert field in kwargs, f"update_task dispatch dropped {field!r}"
+
+
+class TestGetIdentityDispatch:
+    """Verify the get_identity tool is declared and dispatched correctly.
+
+    Magickit's role x allowed_roles gate (T-magickit-identity-extension
+    msg-017 I-2) calls this tool; the fields pinned here are the ones the
+    gate branches on.
+    """
+
+    @staticmethod
+    def _server_with_session() -> tuple[PrismindServer, MagicMock]:
+        server = PrismindServer()
+        server._initialized = True
+        server._project_tools = MagicMock()
+        session = MagicMock()
+        server._session_tools = session
+        return server, session
+
+    def test_tool_is_declared(self):
+        schema = _tool_schema("get_identity")
+        assert schema.get("required") == ["identity_name"]
+        assert set(schema.get("properties", {})) == {"identity_name", "user"}
+
+    def test_dispatch_threads_user_and_shapes_response(self):
+        from spirrow_prismind.models import GetIdentityResult, IdentityInfo
+
+        server, session = self._server_with_session()
+        session.get_identity.return_value = GetIdentityResult(
+            success=True,
+            found=True,
+            identity=IdentityInfo(
+                identity_name="Einstein",
+                user="sgadmin",
+                allowed_roles=["naysayer"],
+                independence_class="independent",
+            ),
+            message="ok",
+        )
+
+        result = asyncio.run(
+            server._dispatch_tool(
+                "get_identity",
+                {"identity_name": "Einstein", "user": "sgadmin"},
+            )
+        )
+
+        # user must be threaded: identity records are keyed by
+        # (user, identity_name) and upsert_identity threads it too.
+        kwargs = session.get_identity.call_args.kwargs
+        assert kwargs["identity_name"] == "Einstein"
+        assert kwargs["user"] == "sgadmin"
+
+        assert result["success"] is True
+        assert result["found"] is True
+        assert result["identity"]["allowed_roles"] == ["naysayer"]
+
+    def test_dispatch_reports_not_found_without_failing(self):
+        from spirrow_prismind.models import GetIdentityResult
+
+        server, session = self._server_with_session()
+        session.get_identity.return_value = GetIdentityResult(
+            success=True, found=False, identity=None, message="unregistered",
+        )
+
+        result = asyncio.run(
+            server._dispatch_tool("get_identity", {"identity_name": "Nobody"})
+        )
+
+        assert result["success"] is True
+        assert result["found"] is False
+        assert result["identity"] is None
