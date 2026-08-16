@@ -61,3 +61,6 @@ start.sh
 # Local storage fallback files
 .prismind_memory_cache.json
 .prismind_projects.json
+
+# Local snapshots written by scripts/backup.sh (contains credentials)
+backups/
