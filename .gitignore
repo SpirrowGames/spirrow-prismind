@@ -63,4 +63,4 @@ start.sh
 .prismind_projects.json
 
 # Local snapshots written by scripts/backup.sh (contains credentials)
-backups/
+backups
