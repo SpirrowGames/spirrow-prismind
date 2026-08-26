@@ -107,7 +107,7 @@ class CurrentProject:
 
 
 EMBODIMENT_VALUES = ("web_ai_chat", "terminal_coding_agent", "unknown")
-INDEPENDENCE_CLASS_VALUES = ("main-chain", "independent", "human")
+INDEPENDENCE_CLASS_VALUES = ("main-chain", "independent", "human", "machine")
 
 # Identity_names whose records must omit ``embodiment`` from response payloads
 # (ADR-2026-05-29-12 §3 "case 3" -- response-side omit). The human identity
@@ -139,8 +139,15 @@ class Identity:
       -- distinct from "preserve existing" (see ``keep_allowed_roles`` on
       ``upsert_identity``). It is an unusual but legal state; with role
       checks live, the actor will be rejected by every role-bearing post.
-    - ``independence_class`` -- main-chain / independent / human. Required
-      on every upsert ("書き忘れ不能" guarantee from msg-001 §C-4).
+    - ``independence_class`` -- main-chain / independent / human / machine.
+      Required on every upsert ("書き忘れ不能" guarantee from msg-001 §C-4).
+      ``human`` and ``machine`` are non-scale kinds (the actor is outside the
+      main-chain/independent scale entirely) -- ``human`` for humans, ``machine``
+      for harness code that carries someone else's utterance without producing
+      its own judgment (spirrow-mindwire T-role-null-must-become-impossible
+      msg-1706 §2). Semantic enforcement of "machine ⟹ allowed_roles==[]"
+      lives at the client (mindwire) because Prismind does not own the role
+      vocabulary (ADR-2026-05-29-10).
     - ``persona_description`` -- optional human-readable persona note.
     - ``embodiment`` -- **DEPRECATED** by ADR-2026-05-29-12. Runtime form
       (``web_ai_chat`` / ``terminal_coding_agent`` / ``unknown``) is now

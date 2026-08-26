@@ -369,8 +369,8 @@ TOOLS = [
                 },
                 "independence_class": {
                     "type": "string",
-                    "enum": ["main-chain", "independent", "human"],
-                    "description": "Actor's gating class for ADR-09 D-3. Required on every upsert.",
+                    "enum": ["main-chain", "independent", "human", "machine"],
+                    "description": "Actor's gating class for ADR-09 D-3. Required on every upsert. 'machine' = non-scale kind for harness code that carries an utterance rather than producing judgment (spirrow-mindwire T-role-null-must-become-impossible msg-1706 §2); semantic pairing with allowed_roles is a client-side rule (Prismind does not own the role vocabulary).",
                 },
                 "allowed_roles": {
                     "type": "array",

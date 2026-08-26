@@ -290,7 +290,7 @@ class TestUpsertIdentityDispatch:
         # independence_class enum pinned; embodiment is deprecated and now
         # carries the ADR-12 self-declared enum (3 values + null).
         assert properties["independence_class"]["enum"] == [
-            "main-chain", "independent", "human",
+            "main-chain", "independent", "human", "machine",
         ]
         assert properties["embodiment"]["enum"] == [
             "web_ai_chat", "terminal_coding_agent", "unknown", None,
