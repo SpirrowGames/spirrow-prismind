@@ -918,6 +918,27 @@ class TestUpsertIdentity:
         assert r.success is False
         assert "independence_class" in r.message
 
+    def test_machine_is_a_valid_independence_class(self, session_tools):
+        """`machine` is a legitimate independence_class value (spirrow-mindwire
+        T-role-null-must-become-impossible msg-1706 §2). Prismind accepts it;
+        semantic restrictions (e.g. must pair with allowed_roles=[]) belong
+        to the client, not this validation gate."""
+        r = session_tools.upsert_identity(
+            identity_name="ident-machine-smoke",
+            independence_class="machine",
+            allowed_roles=[],
+        )
+        assert r.success is True
+        assert r.identity.independence_class == "machine"
+        # And a machine record with a role is legal at THIS layer -- the client
+        # would refuse to construct it, but Prismind does not police it.
+        r2 = session_tools.upsert_identity(
+            identity_name="ident-machine-with-role",
+            independence_class="machine",
+            allowed_roles=["proposer"],
+        )
+        assert r2.success is True
+
     def test_allowed_roles_required_without_keep_flag(self, session_tools):
         """Omitting allowed_roles without keep_allowed_roles=True fails."""
         r = session_tools.upsert_identity(
