@@ -448,3 +448,111 @@ class TestSyncCatalogFromFilesystem:
         assert entry.metadata["source"] == "Filesystem"
         assert entry.metadata["status"] == "active"
         assert entry.metadata["keywords"] == ["prismind", "store"]
+
+
+class TestSearchCatalogStatusDefault:
+    """Drafts are live work and must be findable; the dead must not be.
+
+    The `status="active"` default was a no-op for as long as the catalog
+    came from Sheets — sync_catalog defaults a missing status column to
+    "active", so every row matched. Phase 1 brought real frontmatter values
+    in, and the filter started hiding things: the docs-infrastructure design
+    document itself carries `status: draft` and vanished from search while
+    get_document still returned it.
+
+    `archived` is what DocumentStore.delete() writes as its reversible
+    delete (design §6.3), so it has to stay hidden. `superseded` likewise.
+    """
+
+    def _seed(self, mock_rag_client, project_tools):
+        project_tools.setup_project(
+            project="st_proj",
+            name="Status Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        for doc_id, status in [
+            ("active_doc", "active"),
+            ("draft_doc", "draft"),
+            ("archived_doc", "archived"),
+            ("superseded_doc", "superseded"),
+        ]:
+            mock_rag_client.add_catalog_entry(
+                doc_id=doc_id,
+                name=doc_id,
+                doc_type="設計書",
+                project="st_proj",
+                phase_task="P1-T01",
+                metadata={"status": status},
+            )
+
+    def _ids(self, result):
+        return {d.doc_id for d in result.documents if d.project == "st_proj"}
+
+    def test_default_keeps_drafts_and_hides_the_dead(
+        self, catalog_tools, mock_rag_client, project_tools
+    ):
+        self._seed(mock_rag_client, project_tools)
+
+        result = catalog_tools.search_catalog(project="st_proj", limit=50)
+
+        assert self._ids(result) == {"active_doc", "draft_doc"}
+
+    def test_all_includes_archived_and_superseded(
+        self, catalog_tools, mock_rag_client, project_tools
+    ):
+        self._seed(mock_rag_client, project_tools)
+
+        result = catalog_tools.search_catalog(
+            project="st_proj", status="all", limit=50
+        )
+
+        assert self._ids(result) == {
+            "active_doc",
+            "draft_doc",
+            "archived_doc",
+            "superseded_doc",
+        }
+
+    def test_an_explicit_status_is_still_an_exact_match(
+        self, catalog_tools, mock_rag_client, project_tools
+    ):
+        self._seed(mock_rag_client, project_tools)
+
+        assert self._ids(
+            catalog_tools.search_catalog(
+                project="st_proj", status="draft", limit=50
+            )
+        ) == {"draft_doc"}
+        assert self._ids(
+            catalog_tools.search_catalog(
+                project="st_proj", status="archived", limit=50
+            )
+        ) == {"archived_doc"}
+
+    def test_entries_without_a_status_are_treated_as_active(
+        self, catalog_tools, mock_rag_client, project_tools
+    ):
+        """Sheets rows lacking the column default to active; keep that."""
+        project_tools.setup_project(
+            project="nostatus_proj",
+            name="No Status",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        mock_rag_client.add_catalog_entry(
+            doc_id="bare_doc",
+            name="Bare",
+            doc_type="設計書",
+            project="nostatus_proj",
+            phase_task="P1-T01",
+            metadata={},
+        )
+
+        result = catalog_tools.search_catalog(project="nostatus_proj", limit=50)
+
+        assert "bare_doc" in {d.doc_id for d in result.documents}

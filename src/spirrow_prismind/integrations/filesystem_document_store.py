@@ -26,7 +26,7 @@ the value is the clone's directory name under ``<root>``.
 hold documents. It defaults to ``["docs"]``. Spirrow-VoxelWorld needs it:
 that repository keeps its specs in ``Docs/`` and only ``branching.md`` in
 ``docs/``, both are live, and ``/srv/docs`` sits on a case-sensitive
-filesystem -- so a single lowercase guess finds one file out of fourteen.
+filesystem -- so a single lowercase guess finds one file out of thirteen.
 The first entry is where new documents are written.
 """
 

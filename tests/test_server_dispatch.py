@@ -569,3 +569,28 @@ class TestProgressUserForwarding:
         )
 
         assert progress.delete_task.call_args.kwargs["user"] == "u1"
+
+
+class TestSearchCatalogStatusDispatch:
+    """`status` must reach CatalogTools, like `project` before it."""
+
+    def test_dispatch_forwards_status(self):
+        server, catalog = _make_server_with_mock_catalog()
+
+        asyncio.run(
+            server._dispatch_tool(
+                "search_catalog", {"query": "x", "status": "all"}
+            )
+        )
+
+        assert catalog.search_catalog.call_args.kwargs["status"] == "all"
+
+    def test_omitted_status_is_none_so_the_default_applies(self):
+        server, catalog = _make_server_with_mock_catalog()
+
+        asyncio.run(server._dispatch_tool("search_catalog", {"query": "x"}))
+
+        assert catalog.search_catalog.call_args.kwargs["status"] is None
+
+    def test_schema_declares_status(self):
+        assert "status" in _tool_schema("search_catalog")["properties"]
