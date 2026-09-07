@@ -19,6 +19,16 @@ rag_server_url = "http://localhost:8000"
 # RAG collection name
 rag_collection = "prismind"
 
+[documents]
+# Where document bodies live.
+#   "google"     - Google Drive/Docs (behaviour before Phase 1; rollback path)
+#   "filesystem" - Markdown in the Git clones under `root`
+backend = "google"
+# Directory holding one Git clone per repository (filesystem backend only)
+root = "/srv/docs"
+# Repository map. Empty = <root>/repos.toml
+repos_config = ""
+
 [log]
 # Log level: DEBUG, INFO, WARNING, ERROR
 level = "INFO"

@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import MagicMock
 from dataclasses import dataclass
 
+from spirrow_prismind.integrations.document_store import StoredDoc
+
 
 @dataclass
 class MockDocInfo:
@@ -40,14 +42,14 @@ class TestGetDocument:
         assert result.found is False
         assert "検索クエリまたはドキュメントID" in result.message
 
-    def test_get_document_by_id(self, document_tools, mock_docs_client):
+    def test_get_document_by_id(self, document_tools, mock_document_store):
         """Test get_document by direct ID."""
-        # Setup mock
-        mock_docs_client.get_document.return_value = MockDocInfo(
+        mock_document_store.docs["doc123"] = StoredDoc(
             doc_id="doc123",
             title="Test Document",
+            body="Document content here",
             url="https://docs.google.com/doc123",
-            body_text="Document content here",
+            mime_type="application/vnd.google-apps.document",
         )
 
         result = document_tools.get_document(doc_id="doc123")
@@ -56,10 +58,10 @@ class TestGetDocument:
         assert result.document is not None
         assert result.document.doc_id == "doc123"
         assert result.document.name == "Test Document"
-        mock_docs_client.get_document.assert_called_once_with("doc123")
+        assert result.document.content == "Document content here"
 
     def test_get_document_by_query_single_result(
-        self, document_tools, mock_rag_client, mock_docs_client, project_tools
+        self, document_tools, mock_rag_client, mock_document_store, project_tools
     ):
         """Test get_document by query with single result."""
         # Setup project
@@ -82,12 +84,13 @@ class TestGetDocument:
             metadata={"source": "Google Docs"},
         )
 
-        # Setup docs client
-        mock_docs_client.get_document.return_value = MockDocInfo(
+        # Setup the store
+        mock_document_store.docs["found_doc"] = StoredDoc(
             doc_id="found_doc",
             title="Found Document",
+            body="Content",
             url="https://docs.google.com/found_doc",
-            body_text="Content",
+            mime_type="application/vnd.google-apps.document",
         )
 
         result = document_tools.get_document(query="Found Document")
@@ -189,7 +192,7 @@ class TestCreateDocument:
         assert "register_document_type" in result.message
 
     def test_create_document_success(
-        self, document_tools, mock_docs_client, mock_drive_client, project_tools, setup_standard_global_types
+        self, document_tools, mock_document_store, project_tools, setup_standard_global_types
     ):
         """Test successful document creation."""
         # Setup project
@@ -202,23 +205,6 @@ class TestCreateDocument:
             create_folders=False,
         )
 
-        # Setup mock - new implementation uses ensure_folder_path
-        mock_drive_client.ensure_folder_path.return_value = (
-            MockFileInfo(
-                file_id="design_folder_id",
-                name="設計書",
-            ),
-            False,  # created=False (folder already exists)
-        )
-        mock_drive_client.create_document.return_value = MockFileInfo(
-            file_id="new_doc_id",
-            name="New Document",
-            web_view_link="https://docs.google.com/document/d/new_doc_id/edit",
-        )
-        # Mock for insert_text and batchUpdate
-        mock_docs_client.insert_text.return_value = True
-        mock_docs_client.service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
-
         result = document_tools.create_document(
             name="New Document",
             doc_type="設計書",
@@ -229,24 +215,18 @@ class TestCreateDocument:
         )
 
         assert result.success is True
-        assert result.doc_id == "new_doc_id"
         assert result.name == "New Document"
         assert result.doc_type == "設計書"
         assert result.unknown_doc_type is False
         assert "作成しました" in result.message
-        # Verify ensure_folder_path was called
-        mock_drive_client.ensure_folder_path.assert_called_once_with(
-            path="設計書",
-            parent_id="folder1",
-        )
-        # Verify the document was created in the correct folder
-        mock_drive_client.create_document.assert_called_once_with(
-            name="New Document",
-            parent_id="design_folder_id",
-        )
+        # The store was asked for the doc_type's folder, and it holds the body
+        assert ("create_proj", "設計書") in mock_document_store.folders
+        stored = mock_document_store.docs[result.doc_id]
+        assert stored.title == "New Document"
+        assert stored.body == "# New Document\n\nContent here"
 
     def test_create_document_with_nested_folder_path(
-        self, document_tools, mock_docs_client, mock_drive_client, mock_rag_client, project_tools
+        self, document_tools, mock_document_store, mock_rag_client, project_tools
     ):
         """Test document creation with nested folder path like '設計/詳細設計'."""
         from spirrow_prismind.tools.project_tools import ProjectTools
@@ -288,22 +268,6 @@ class TestCreateDocument:
             }
             ProjectTools._fallback_current_project["test_user"] = "nested_proj"
 
-        # Setup mock for nested folder creation
-        mock_drive_client.ensure_folder_path.return_value = (
-            MockFileInfo(
-                file_id="nested_folder_id",
-                name="詳細設計",
-            ),
-            True,  # created=True (folders were created)
-        )
-        mock_drive_client.create_document.return_value = MockFileInfo(
-            file_id="nested_doc_id",
-            name="Detailed Design Doc",
-            web_view_link="https://docs.google.com/document/d/nested_doc_id/edit",
-        )
-        mock_docs_client.insert_text.return_value = True
-        mock_docs_client.service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
-
         result = document_tools.create_document(
             name="Detailed Design Doc",
             doc_type="詳細設計書",
@@ -312,20 +276,16 @@ class TestCreateDocument:
         )
 
         assert result.success is True
-        assert result.doc_id == "nested_doc_id"
         assert result.doc_type == "詳細設計書"
-        # Verify ensure_folder_path was called with nested path
-        mock_drive_client.ensure_folder_path.assert_called_with(
-            path="設計/詳細設計",
-            parent_id="root_folder",
-        )
+        # The nested folder path reached the store verbatim
+        assert ("nested_proj", "設計/詳細設計") in mock_document_store.folders
 
 
 class TestUpdateDocument:
     """Tests for update_document method."""
 
     def test_update_document_content(
-        self, document_tools, mock_docs_client, mock_rag_client, project_tools
+        self, document_tools, mock_document_store, mock_rag_client, project_tools
     ):
         """Test updating document content."""
         # Setup project and catalog entry
@@ -355,10 +315,10 @@ class TestUpdateDocument:
 
         assert result.success is True
         assert "content" in result.updated_fields
-        mock_docs_client.replace_all_text.assert_called_once()
+        assert mock_document_store.writes == [("update_doc", "New content", False)]
 
     def test_update_document_append(
-        self, document_tools, mock_docs_client, mock_rag_client, project_tools
+        self, document_tools, mock_document_store, mock_rag_client, project_tools
     ):
         """Test appending to document content."""
         project_tools.setup_project(
@@ -386,105 +346,9 @@ class TestUpdateDocument:
         )
 
         assert result.success is True
-        mock_docs_client.append_text.assert_called_once()
-
-
-class TestUpdateDocumentNonNative:
-    """Tests for update_document on non-native (text/markdown, text/plain) files.
-
-    These files are not accepted by the Google Docs API (HTTP 400), so the
-    content must be replaced via a Drive media upload while keeping the doc_id.
-    """
-
-    def _setup_catalog(self, project_tools, mock_rag_client, project, doc_id):
-        project_tools.setup_project(
-            project=project,
-            name=project,
-            spreadsheet_id="sheet1",
-            root_folder_id="folder1",
-            create_sheets=False,
-            create_folders=False,
-        )
-        mock_rag_client.add_catalog_entry(
-            doc_id=doc_id,
-            name=doc_id,
-            doc_type="adr",
-            project=project,
-            phase_task="P1-T01",
-            metadata={},
-        )
-
-    def test_markdown_replace_uses_drive_media_upload(
-        self, document_tools, mock_docs_client, mock_drive_client,
-        mock_rag_client, project_tools
-    ):
-        """text/markdown replace -> Drive media upload, not Docs API."""
-        self._setup_catalog(project_tools, mock_rag_client, "md_proj", "md_doc")
-        mock_drive_client.get_file_info.return_value = MockFileInfo(
-            file_id="md_doc", name="ADR-06", mime_type="text/markdown"
-        )
-
-        result = document_tools.update_document(
-            doc_id="md_doc",
-            content="# ADR-06 v2.1\n\nfull body",
-            append=False,
-        )
-
-        assert result.success is True
-        assert "content" in result.updated_fields
-        # Docs API must NOT be touched for a non-native file
-        mock_docs_client.replace_all_text.assert_not_called()
-        mock_docs_client.append_text.assert_not_called()
-        # Drive media upload with the same doc_id and preserved mimeType
-        mock_drive_client.update_file_content.assert_called_once_with(
-            "md_doc", "# ADR-06 v2.1\n\nfull body", mime_type="text/markdown"
-        )
-
-    def test_markdown_append_downloads_and_concatenates(
-        self, document_tools, mock_docs_client, mock_drive_client,
-        mock_rag_client, project_tools
-    ):
-        """text/markdown append -> download existing + concat, then media upload."""
-        self._setup_catalog(project_tools, mock_rag_client, "md_ap", "md_ap_doc")
-        mock_drive_client.get_file_info.return_value = MockFileInfo(
-            file_id="md_ap_doc", name="notes", mime_type="text/markdown"
-        )
-        mock_drive_client.download_file_content.return_value = b"existing\n"
-
-        result = document_tools.update_document(
-            doc_id="md_ap_doc",
-            content="appended",
-            append=True,
-        )
-
-        assert result.success is True
-        mock_drive_client.download_file_content.assert_called_once_with("md_ap_doc")
-        mock_drive_client.update_file_content.assert_called_once_with(
-            "md_ap_doc", "existing\nappended", mime_type="text/markdown"
-        )
-        mock_docs_client.append_text.assert_not_called()
-
-    def test_unsupported_native_type_fails_cleanly(
-        self, document_tools, mock_docs_client, mock_drive_client,
-        mock_rag_client, project_tools
-    ):
-        """A native Sheet/Slide is rejected with no partial write."""
-        self._setup_catalog(project_tools, mock_rag_client, "sheet_proj", "sheet_doc")
-        mock_drive_client.get_file_info.return_value = MockFileInfo(
-            file_id="sheet_doc", name="data",
-            mime_type="application/vnd.google-apps.spreadsheet",
-        )
-
-        result = document_tools.update_document(
-            doc_id="sheet_doc",
-            content="should not be written",
-            append=False,
-        )
-
-        assert result.success is False
-        assert "content" not in result.updated_fields
-        mock_docs_client.replace_all_text.assert_not_called()
-        mock_drive_client.update_file_content.assert_not_called()
+        assert mock_document_store.writes == [
+            ("append_doc", "Appended content", True)
+        ]
 
 
 class TestGenerateKeywords:
@@ -622,7 +486,7 @@ class TestDeleteDocument:
         assert "削除しました" in result.message
 
     def test_delete_document_with_drive_file(
-        self, document_tools, mock_rag_client, mock_drive_client, project_tools
+        self, document_tools, mock_rag_client, mock_document_store, project_tools
     ):
         """Test document deletion including Drive file."""
         # Setup project
@@ -645,9 +509,6 @@ class TestDeleteDocument:
             metadata={},
         )
 
-        # Mock Drive deletion
-        mock_drive_client.delete_file.return_value = True
-
         result = document_tools.delete_document(
             doc_id="delete_with_drive",
             project="drive_delete_proj",
@@ -657,9 +518,7 @@ class TestDeleteDocument:
 
         assert result.success is True
         assert result.drive_file_deleted is True
-        mock_drive_client.delete_file.assert_called_once_with(
-            "delete_with_drive", permanent=True
-        )
+        assert mock_document_store.deleted == [("delete_with_drive", True)]
 
 
 class TestListDocuments:
@@ -769,7 +628,7 @@ class TestUpdateDocumentExtended:
     """Tests for update_document with extended fields."""
 
     def test_update_document_doc_type_change(
-        self, document_tools, mock_rag_client, mock_drive_client, project_tools, setup_standard_global_types
+        self, document_tools, mock_rag_client, mock_document_store, project_tools, setup_standard_global_types
     ):
         """Test updating document with doc_type change moves file."""
         # Setup project
@@ -792,16 +651,6 @@ class TestUpdateDocumentExtended:
             metadata={"source": "Google Docs"},
         )
 
-        # Mock Drive operations
-        mock_drive_client.ensure_folder_path.return_value = (
-            MockFileInfo(file_id="procedure_folder", name="実装手順書"),
-            False,
-        )
-        mock_drive_client.move_file.return_value = MockFileInfo(
-            file_id="change_type_doc",
-            name="Change Type Doc",
-        )
-
         result = document_tools.update_document(
             doc_id="change_type_doc",
             metadata={"doc_type": "実装手順書"},
@@ -809,7 +658,9 @@ class TestUpdateDocumentExtended:
 
         assert result.success is True
         assert "doc_type" in result.updated_fields
-        mock_drive_client.move_file.assert_called_once()
+        assert mock_document_store.moves == [
+            ("change_type_doc", "update_type_proj", "実装手順書")
+        ]
 
     def test_update_document_phase_task_change(
         self, document_tools, mock_rag_client, mock_sheets_client, project_tools

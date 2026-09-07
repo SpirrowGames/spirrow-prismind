@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from tests.mocks import MockRAGClient, MockMemoryClient
+from tests.mocks import MockDocumentStore, MockRAGClient, MockMemoryClient
 
 
 @pytest.fixture(autouse=True)
@@ -121,13 +121,18 @@ def session_tools(mock_rag_client, mock_memory_client, mock_sheets_client, proje
 
 
 @pytest.fixture
-def document_tools(mock_rag_client, mock_sheets_client, mock_drive_client, mock_docs_client, project_tools):
+def mock_document_store():
+    """Create an in-memory document store."""
+    return MockDocumentStore()
+
+
+@pytest.fixture
+def document_tools(mock_rag_client, mock_sheets_client, mock_document_store, project_tools):
     """Create DocumentTools with mock clients."""
     from spirrow_prismind.tools.document_tools import DocumentTools
 
     return DocumentTools(
-        docs_client=mock_docs_client,
-        drive_client=mock_drive_client,
+        store=mock_document_store,
         sheets_client=mock_sheets_client,
         rag_client=mock_rag_client,
         project_tools=project_tools,
@@ -136,7 +141,7 @@ def document_tools(mock_rag_client, mock_sheets_client, mock_drive_client, mock_
 
 
 @pytest.fixture
-def catalog_tools(mock_rag_client, mock_sheets_client, project_tools):
+def catalog_tools(mock_rag_client, mock_sheets_client, mock_document_store, project_tools):
     """Create CatalogTools with mock clients."""
     from spirrow_prismind.tools.catalog_tools import CatalogTools
 
@@ -145,6 +150,7 @@ def catalog_tools(mock_rag_client, mock_sheets_client, project_tools):
         sheets_client=mock_sheets_client,
         project_tools=project_tools,
         user_name="test_user",
+        store=mock_document_store,
     )
 
 

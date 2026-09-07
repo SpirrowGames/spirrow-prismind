@@ -322,3 +322,129 @@ class TestGetDocumentsByFeature:
         assert len(documents) >= 1
         for doc in documents:
             assert doc.feature == "Authentication"
+
+
+class TestSyncCatalogIndexesBodies:
+    """The body must reach the vector index, not just the title.
+
+    Before Phase 1, sync_catalog called add_catalog_entry without
+    ``content=``, so the entry fell back to the stub
+    ``"<name> <doc_type> <phase_task>"`` and every sync wiped the document
+    text out of the index.
+    """
+
+    def _entry(self, mock_rag_client, project, doc_id):
+        storage = mock_rag_client._storage[mock_rag_client.collection_name]
+        return storage[f"catalog:{project}:{doc_id}"]
+
+    def test_google_sync_indexes_body_from_store(
+        self, catalog_tools, mock_sheets_client, mock_rag_client,
+        mock_document_store, project_tools
+    ):
+        from spirrow_prismind.integrations.document_store import StoredDoc
+
+        project_tools.setup_project(
+            project="body_proj",
+            name="Body Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        mock_document_store.docs["doc1"] = StoredDoc(
+            doc_id="doc1",
+            title="Doc 1",
+            body="実際の本文がここにある",
+            url="u",
+            mime_type="text/markdown",
+        )
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["ドキュメント名", "保存先", "ID", "種別", "プロジェクト", "フェーズタスク"],
+                ["Doc 1", "Google Docs", "doc1", "設計書", "body_proj", "P1-T01"],
+            ]
+        }
+
+        result = catalog_tools.sync_catalog(project="body_proj")
+
+        assert result.success is True
+        entry = self._entry(mock_rag_client, "body_proj", "doc1")
+        assert entry.content == "実際の本文がここにある"
+
+    def test_google_sync_survives_unreadable_body(
+        self, catalog_tools, mock_sheets_client, mock_rag_client, project_tools
+    ):
+        """A document the store cannot read still gets its metadata row."""
+        project_tools.setup_project(
+            project="gone_proj",
+            name="Gone Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["ドキュメント名", "保存先", "ID", "種別", "プロジェクト", "フェーズタスク"],
+                ["Missing", "Google Docs", "gone", "設計書", "gone_proj", "P1-T01"],
+            ]
+        }
+
+        result = catalog_tools.sync_catalog(project="gone_proj")
+
+        assert result.success is True
+        assert result.synced_count == 1
+
+
+class TestSyncCatalogFromFilesystem:
+    """With a FilesystemDocumentStore, scan() is the sync source."""
+
+    @pytest.fixture
+    def fs_catalog_tools(self, tmp_path, mock_rag_client, mock_sheets_client, project_tools):
+        from spirrow_prismind.integrations.filesystem_document_store import (
+            FilesystemDocumentStore,
+        )
+        from spirrow_prismind.tools.catalog_tools import CatalogTools
+
+        docs = tmp_path / "spirrow-docs" / "docs" / "platform"
+        docs.mkdir(parents=True)
+        (docs / "design.md").write_text(
+            "---\n"
+            "id: platform:design\n"
+            "title: 設計書\n"
+            "type: design\n"
+            "status: active\n"
+            "keywords: [prismind, store]\n"
+            "---\n\n"
+            "本文が索引に載る必要がある。\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "repos.toml").write_text(
+            '[repos]\nspirrow-docs = "spirrow-docs"\n', encoding="utf-8"
+        )
+
+        return CatalogTools(
+            rag_client=mock_rag_client,
+            sheets_client=mock_sheets_client,
+            project_tools=project_tools,
+            user_name="test_user",
+            store=FilesystemDocumentStore(root=str(tmp_path)),
+        )
+
+    def test_sync_reads_markdown_not_sheets(
+        self, fs_catalog_tools, mock_sheets_client, mock_rag_client
+    ):
+        result = fs_catalog_tools.sync_catalog(project="spirrow-docs")
+
+        assert result.success is True
+        assert result.synced_count == 1
+        mock_sheets_client.read_range.assert_not_called()
+
+        storage = mock_rag_client._storage[mock_rag_client.collection_name]
+        entry = storage["catalog:spirrow-docs:platform:design"]
+        assert "本文が索引に載る必要がある" in entry.content
+        assert entry.metadata["name"] == "設計書"
+        assert entry.metadata["doc_type"] == "design"
+        assert entry.metadata["source"] == "Filesystem"
+        assert entry.metadata["status"] == "active"
+        assert entry.metadata["keywords"] == ["prismind", "store"]

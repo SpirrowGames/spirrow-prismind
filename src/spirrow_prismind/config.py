@@ -32,6 +32,19 @@ class ServicesConfig:
 
 
 @dataclass
+class DocumentsConfig:
+    """Document storage backend configuration.
+
+    ``backend = "google"`` is the pre-Phase-1 behaviour and the rollback
+    path; ``"filesystem"`` reads Markdown out of the Git clones under
+    ``root`` (design §6.7).
+    """
+    backend: Literal["google", "filesystem"] = "google"
+    root: str = "/srv/docs"
+    repos_config: str = ""  # Empty = <root>/repos.toml
+
+
+@dataclass
 class LogConfig:
     """Logging configuration."""
     level: str = "INFO"
@@ -51,6 +64,7 @@ class Config:
     """Application configuration."""
     google: GoogleConfig = field(default_factory=GoogleConfig)
     services: ServicesConfig = field(default_factory=ServicesConfig)
+    documents: DocumentsConfig = field(default_factory=DocumentsConfig)
     log: LogConfig = field(default_factory=LogConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
 
@@ -117,6 +131,11 @@ class Config:
                     "rag_collection", "prismind"
                 ),
             ),
+            documents=DocumentsConfig(
+                backend=data.get("documents", {}).get("backend", "google"),
+                root=data.get("documents", {}).get("root", "/srv/docs"),
+                repos_config=data.get("documents", {}).get("repos_config", ""),
+            ),
             log=LogConfig(
                 level=data.get("log", {}).get("level", "INFO"),
                 file=data.get("log", {}).get("file", ""),
@@ -144,6 +163,12 @@ class Config:
 
         if self.session.auto_save_interval < 1:
             errors.append("auto_save_interval must be at least 1")
+
+        if self.documents.backend not in ["google", "filesystem"]:
+            errors.append(
+                f"Invalid documents.backend: {self.documents.backend} "
+                "(must be 'google' or 'filesystem')"
+            )
 
         if self.services.memory_server_type not in ["rest", "mcp"]:
             errors.append(f"Invalid memory_server_type: {self.services.memory_server_type} (must be 'rest' or 'mcp')")
@@ -200,6 +225,11 @@ class Config:
     def user_name(self) -> str:
         """Get user name."""
         return self.session.user_name
+
+    @property
+    def documents_backend(self) -> str:
+        """Get the configured document storage backend."""
+        return self.documents.backend
 
     @property
     def projects_folder_id(self) -> str:
