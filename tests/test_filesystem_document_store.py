@@ -627,3 +627,56 @@ class TestReposConfigReload:
         first = store.repos
 
         assert store.repos is first
+
+
+class TestStaleIndexAfterExternalRemoval:
+    """reconcile runs in another process; this one's cache goes stale.
+
+    Found on sg-ai-server-01 while verifying the working tier. Every merged
+    pull request hits it: reconcile removes the working copy, and this
+    process keeps a cached path to a file that is gone. get_document then
+    raised DocumentNotFound with the canonical file sitting right there,
+    search_catalog went on listing the document, and nothing recovered it
+    short of a restart.
+    """
+
+    def test_reads_fall_back_to_canonical_after_the_working_copy_vanishes(
+        self, store, root
+    ):
+        doc_id = "platform:docs-infrastructure-design"
+        store.write(doc_id, "edited\n")
+        working = (
+            root
+            / "_work/spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        )
+        assert store.read(doc_id).body.strip() == "edited"
+
+        # What reconcile does, from a process that shares no cache with this
+        # one -- so no invalidation reaches here.
+        working.unlink()
+
+        doc = store.read(doc_id)
+        assert doc.body.strip().startswith("# 設計書")
+        assert doc.path.startswith("spirrow-docs/")
+
+    def test_a_document_removed_from_both_tiers_still_raises(self, store, root):
+        doc_id = "platform:docs-infrastructure-design"
+        assert store.read(doc_id) is not None
+
+        (root / "spirrow-docs/docs/platform/docs-infrastructure-design.md").unlink()
+
+        with pytest.raises(DocumentNotFound):
+            store.read(doc_id)
+
+    def test_write_after_an_external_removal_recovers(self, store, root):
+        """The path the operator used to recover by hand."""
+        doc_id = "platform:docs-infrastructure-design"
+        store.write(doc_id, "first\n")
+        (
+            root
+            / "_work/spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        ).unlink()
+
+        store.write(doc_id, "second\n")
+
+        assert store.read(doc_id).body.strip() == "second"
