@@ -4,7 +4,12 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from ..integrations import GoogleSheetsClient, RAGClient
+from ..integrations import (
+    DocumentStore,
+    FilesystemDocumentStore,
+    GoogleSheetsClient,
+    RAGClient,
+)
 from ..models import CatalogEntry, SearchCatalogResult, SyncCatalogResult
 from .project_tools import ProjectTools
 
@@ -20,6 +25,7 @@ class CatalogTools:
         sheets_client: GoogleSheetsClient,
         project_tools: ProjectTools,
         user_name: str = "default",
+        store: Optional[DocumentStore] = None,
     ):
         """Initialize catalog tools.
         
@@ -28,11 +34,14 @@ class CatalogTools:
             sheets_client: Google Sheets client for master catalog
             project_tools: Project tools for config access
             user_name: Default user ID
+            store: Document store. When it is a FilesystemDocumentStore,
+                sync_catalog reads from it instead of the Sheets 目録.
         """
         self.rag = rag_client
         self.sheets = sheets_client
         self.project_tools = project_tools
         self.user_name = user_name
+        self.store = store
 
     def search_catalog(
         self,
@@ -175,7 +184,12 @@ class CatalogTools:
                 synced_count=0,
                 message="プロジェクトが選択されていません。",
             )
-        
+
+        # Filesystem backend: the store's scan() is the source of truth,
+        # not the Sheets 目録 (design 6.3).
+        if isinstance(self.store, FilesystemDocumentStore):
+            return self._sync_catalog_from_store(project)
+
         config = self.project_tools.get_project_config(project, user)
         if not config:
             return SyncCatalogResult(
@@ -248,8 +262,22 @@ class CatalogTools:
                 
                 # Parse related docs
                 related_doc_list = [d.strip() for d in related_docs.split(",") if d.strip()]
-                
-                # Add to RAG
+
+                # Add to RAG.
+                # content= is load-bearing: without it add_catalog_entry
+                # indexes the stub "<name> <doc_type> <phase_task>" instead
+                # of the body, so every sync silently emptied the vector
+                # index of document text. Fetch the body back when we can.
+                body = ""
+                if self.store is not None:
+                    try:
+                        body = self.store.read(doc_id).body
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not fetch body for '{doc_id}', indexing "
+                            f"metadata only: {e}"
+                        )
+
                 self.rag.add_catalog_entry(
                     doc_id=doc_id,
                     name=name,
@@ -266,6 +294,7 @@ class CatalogTools:
                         "creator": creator,
                         "status": status,
                     },
+                    content=body,
                 )
                 
                 synced_count += 1
@@ -283,6 +312,66 @@ class CatalogTools:
                 synced_count=0,
                 message=f"目録の同期に失敗しました: {e}",
             )
+
+    def _sync_catalog_from_store(self, project: str) -> SyncCatalogResult:
+        """Rebuild a project's RAG catalog from the filesystem store.
+
+        Bodies go in via ``content=`` so ``search_catalog`` matches on the
+        document text, not just its title.
+        """
+        try:
+            docs = self.store.scan(project)
+        except Exception as e:
+            logger.error(f"Failed to scan document store: {e}")
+            return SyncCatalogResult(
+                success=False,
+                synced_count=0,
+                message=f"ドキュメントストアの走査に失敗しました: {e}",
+            )
+
+        deleted_count = self.rag.delete_catalog_entries_by_project(project)
+        logger.info(
+            f"Deleted {deleted_count} existing catalog entries for project {project}"
+        )
+
+        synced_count = 0
+        for doc in docs:
+            fm = doc.frontmatter
+            keywords = fm.get("keywords") or []
+            if isinstance(keywords, str):
+                keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+            related = fm.get("related") or fm.get("related_docs") or []
+            if isinstance(related, str):
+                related = [d.strip() for d in related.split(",") if d.strip()]
+
+            self.rag.add_catalog_entry(
+                doc_id=doc.doc_id,
+                name=doc.title,
+                doc_type=str(fm.get("type") or fm.get("doc_type") or ""),
+                project=project,
+                phase_task=str(fm.get("phase_task") or ""),
+                metadata={
+                    "feature": str(fm.get("feature") or ""),
+                    "keywords": list(keywords),
+                    "reference_timing": str(fm.get("reference_timing") or ""),
+                    "related_docs": list(related),
+                    "source": "Filesystem",
+                    "url": doc.url,
+                    "path": doc.path or "",
+                    "updated_at": str(fm.get("last_verified") or ""),
+                    "creator": str(fm.get("creator") or ""),
+                    "status": str(fm.get("status") or "active"),
+                    "legacy_drive_id": str(fm.get("legacy_drive_id") or ""),
+                },
+                content=doc.body,
+            )
+            synced_count += 1
+
+        return SyncCatalogResult(
+            success=True,
+            synced_count=synced_count,
+            message=f"{synced_count} 件の目録エントリを同期しました。",
+        )
 
     def get_document_by_phase_task(
         self,

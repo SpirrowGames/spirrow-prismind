@@ -19,7 +19,10 @@ from mcp.types import (
 
 from .config import load_config
 from .integrations import (
+    DocumentStore,
+    FilesystemDocumentStore,
     GoogleDocsClient,
+    GoogleDocumentStore,
     GoogleDriveClient,
     GoogleSheetsClient,
     MemoryClient,
@@ -1352,6 +1355,7 @@ class PrismindServer:
         self._setup_tools: Optional[SetupTools] = None
         self._project_tools: Optional[ProjectTools] = None
         self._session_tools: Optional[SessionTools] = None
+        self._document_store: Optional[DocumentStore] = None
         self._document_tools: Optional[DocumentTools] = None
         self._catalog_tools: Optional[CatalogTools] = None
         self._knowledge_tools: Optional[KnowledgeTools] = None
@@ -1450,9 +1454,31 @@ class PrismindServer:
                 user_name=self.config.user_name,
             )
             
+            # Document storage backend (design §6.7). "google" keeps the
+            # pre-Phase-1 behaviour and is the rollback path.
+            if self.config.documents.backend == "filesystem":
+                self._document_store = FilesystemDocumentStore(
+                    root=self.config.documents.root,
+                    repos_config=self.config.documents.repos_config or None,
+                    project_tools=self._project_tools,
+                    user_name=self.config.user_name,
+                )
+                logger.info(
+                    "Document backend: filesystem "
+                    f"(root={self.config.documents.root}, read-only: no "
+                    "publisher configured)"
+                )
+            else:
+                self._document_store = GoogleDocumentStore(
+                    docs_client=self._docs_client,
+                    drive_client=self._drive_client,
+                    project_tools=self._project_tools,
+                    user_name=self.config.user_name,
+                )
+                logger.info("Document backend: google")
+
             self._document_tools = DocumentTools(
-                docs_client=self._docs_client,
-                drive_client=self._drive_client,
+                store=self._document_store,
                 sheets_client=self._sheets_client,
                 rag_client=self._rag_client,
                 project_tools=self._project_tools,
@@ -1464,6 +1490,7 @@ class PrismindServer:
                 sheets_client=self._sheets_client,
                 project_tools=self._project_tools,
                 user_name=self.config.user_name,
+                store=self._document_store,
             )
 
             self._progress_tools = ProgressTools(

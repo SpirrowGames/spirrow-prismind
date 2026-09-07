@@ -30,6 +30,8 @@ dependencies = [
     "google-auth-oauthlib>=1.0.0",
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
+    # Frontmatter on filesystem-backed documents (FilesystemDocumentStore).
+    "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
     "tomli>=2.0.0",
     "tomli-w>=1.0.0",

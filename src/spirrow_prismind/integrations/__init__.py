@@ -1,6 +1,22 @@
 """Integration modules for external services."""
 
+from .document_store import (
+    DocumentNotFound,
+    DocumentStore,
+    DocumentStoreError,
+    StoredDoc,
+    UnsupportedDocumentFormat,
+    slugify,
+)
+from .filesystem_document_store import (
+    DocumentPublisher,
+    FilesystemDocumentStore,
+    NullPublisher,
+    parse_frontmatter,
+    render_frontmatter,
+)
 from .google_docs import DocumentContent, DocumentInfo, GoogleDocsClient
+from .google_document_store import GoogleDocumentStore
 from .google_drive import (
     FileInfo,
     FolderContents,
@@ -9,10 +25,10 @@ from .google_drive import (
 )
 from .google_sheets import GoogleSheetsClient
 from .memory_client import (
-    CurrentProject,
     EMBODIMENT_VALUES,
     HUMAN_IDENTITY_NAMES,
     INDEPENDENCE_CLASS_VALUES,
+    CurrentProject,
     Identity,
     MemoryClient,
     MemoryEntry,
@@ -34,6 +50,19 @@ from .retry import (
 )
 
 __all__ = [
+    # Document store
+    "DocumentNotFound",
+    "DocumentPublisher",
+    "DocumentStore",
+    "DocumentStoreError",
+    "FilesystemDocumentStore",
+    "GoogleDocumentStore",
+    "NullPublisher",
+    "StoredDoc",
+    "UnsupportedDocumentFormat",
+    "parse_frontmatter",
+    "render_frontmatter",
+    "slugify",
     # Google Docs
     "DocumentContent",
     "DocumentInfo",

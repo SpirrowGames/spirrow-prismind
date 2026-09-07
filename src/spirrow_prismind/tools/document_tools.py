@@ -5,10 +5,10 @@ from datetime import datetime
 from typing import Optional
 
 from ..integrations import (
-    GoogleDocsClient,
-    GoogleDriveClient,
+    DocumentStore,
     GoogleSheetsClient,
     RAGClient,
+    UnsupportedDocumentFormat,
 )
 from ..models import (
     CatalogEntry,
@@ -36,8 +36,7 @@ class DocumentTools:
 
     def __init__(
         self,
-        docs_client: GoogleDocsClient,
-        drive_client: GoogleDriveClient,
+        store: DocumentStore,
         sheets_client: GoogleSheetsClient,
         rag_client: RAGClient,
         project_tools: ProjectTools,
@@ -46,19 +45,27 @@ class DocumentTools:
         """Initialize document tools.
         
         Args:
-            docs_client: Google Docs client
-            drive_client: Google Drive client
+            store: Document storage backend (Google Drive/Docs or
+                filesystem). Every document body read/write goes through
+                this; the Sheets and RAG catalogs do not (Phase 1.5).
             sheets_client: Google Sheets client
             rag_client: RAG client
             project_tools: Project tools for config access
             user_name: Default user ID
         """
-        self.docs = docs_client
-        self.drive = drive_client
+        self.store = store
         self.sheets = sheets_client
         self.rag = rag_client
         self.project_tools = project_tools
         self.user_name = user_name
+
+    def _source_label(self) -> str:
+        """Human-readable name of the backing store, for catalog rows."""
+        from ..integrations import FilesystemDocumentStore
+
+        if isinstance(self.store, FilesystemDocumentStore):
+            return "Filesystem"
+        return "Google Docs"
 
     def get_document(
         self,
@@ -140,18 +147,18 @@ class DocumentTools:
         )
 
     def _get_document_by_id(self, doc_id: str) -> DocumentResult:
-        """Get a document by its Google Docs ID.
-        
+        """Get a document by its store ID.
+
         Args:
-            doc_id: Google Docs document ID
-            
+            doc_id: Document ID as the configured store understands it
+
         Returns:
             DocumentResult
         """
         try:
-            # Get from Google Docs
-            doc_content = self.docs.get_document(doc_id)
-            
+            # Get the body from the configured store
+            stored = self.store.read(doc_id)
+
             # Get catalog entry from RAG for metadata
             catalog_result = self.rag.search_by_metadata(
                 where={"doc_id": {"$eq": doc_id}},
@@ -166,12 +173,12 @@ class DocumentTools:
             
             document = Document(
                 doc_id=doc_id,
-                name=doc_content.title,
+                name=stored.title,
                 doc_type=doc_type,
-                content=doc_content.body_text,
-                source="Google Docs",
+                content=stored.body,
+                source=self._source_label(),
                 metadata={
-                    "url": doc_content.url,
+                    "url": stored.url,
                     "phase_task": metadata.get("phase_task", ""),
                     "feature": metadata.get("feature", ""),
                     "updated_at": metadata.get("updated_at", ""),
@@ -262,62 +269,24 @@ class DocumentTools:
             )
 
         try:
-            # Step 2: Get folder ID from cached folder_ids (avoids name search)
-            target_folder_id = doc_type_obj.get_folder_id(config.project_id)
-
-            if not target_folder_id:
-                # Folder ID not cached - create/find folder and cache the ID
-                # This happens on first use or during migration from old data
-                folder_path = doc_type_obj.folder_name  # e.g., "設計/詳細設計"
-
-                if folder_path and config.root_folder_id:
-                    # Use ensure_folder_path for nested paths
-                    folder_info, created = self.drive.ensure_folder_path(
-                        path=folder_path,
-                        parent_id=config.root_folder_id,
-                    )
-                    if folder_info:
-                        target_folder_id = folder_info.file_id
-                        if created:
-                            logger.info(f"Created folder path '{folder_path}' in project folder")
-
-                        # Cache the folder ID for future use (auto-migration)
-                        doc_type_obj.set_folder_id(config.project_id, target_folder_id)
-                        self._save_document_type(doc_type_obj)
-                        logger.info(
-                            f"Cached folder ID for doc_type '{doc_type_obj.type_id}' "
-                            f"in project '{config.project_id}'"
-                        )
-                else:
-                    # No folder path - use project root
-                    target_folder_id = config.root_folder_id
-
-            # Step 3: Create document in the correct folder using Drive API
-            file_info = self.drive.create_document(
+            # Steps 2-4: Create the document in the store. Folder resolution,
+            # the create call, and the heading/body write are all the
+            # backend's business now.
+            stored = self.store.create(
+                project_id=config.project_id,
+                folder_path=doc_type_obj.folder_name or "",
                 name=name,
-                parent_id=target_folder_id,
+                content=content,
+                frontmatter={
+                    "title": name,
+                    "doc_type": doc_type_obj.name,
+                    "phase_task": phase_task,
+                    "feature": feature or "",
+                },
             )
-            doc_id = file_info.file_id
-            doc_url = file_info.web_view_link or f"https://docs.google.com/document/d/{doc_id}/edit"
-
-            # Step 4: Add content using Docs API
-            if content:
-                # Add heading first
-                heading_text = name + "\n"
-                self.docs.insert_text(doc_id, heading_text, index=1)
-                # Apply heading style
-                self.docs.service.documents().batchUpdate(
-                    documentId=doc_id,
-                    body={"requests": [{
-                        "updateParagraphStyle": {
-                            "range": {"startIndex": 1, "endIndex": 1 + len(heading_text)},
-                            "paragraphStyle": {"namedStyleType": "HEADING_1"},
-                            "fields": "namedStyleType",
-                        }
-                    }]},
-                ).execute()
-                # Add content after heading
-                self.docs.insert_text(doc_id, content, index=1 + len(heading_text))
+            doc_id = stored.doc_id
+            doc_url = stored.url
+            source = self._source_label()
 
             # Step 5: Auto-generate keywords if not provided
             if keywords is None:
@@ -359,7 +328,7 @@ class DocumentTools:
                     "keywords": keywords,
                     "reference_timing": reference_timing or "",
                     "related_docs": related_docs or [],
-                    "source": "Google Docs",
+                    "source": source,
                     "url": doc_url,
                 },
                 content=content or "",
@@ -375,7 +344,7 @@ class DocumentTools:
                 name=name,
                 doc_type=doc_type_obj.name,
                 doc_url=doc_url,
-                source="Google Docs",
+                source=source,
                 catalog_registered=catalog_registered,
                 unknown_doc_type=False,
                 message=message,
@@ -421,67 +390,24 @@ class DocumentTools:
         updated_fields = []
 
         try:
-            # Update content if provided.
-            # Branch on the file's mimeType: native Google Docs are edited via
-            # the Docs API (structured body), but non-native text files such as
-            # text/markdown / text/plain are not accepted by the Docs API
-            # (HTTP 400) and must be replaced via a Drive media upload, which
-            # keeps the same doc_id (fileId).
+            # Update content if provided. The store owns the format
+            # question (native Google Doc vs. text/markdown vs. a Markdown
+            # file on disk); it raises UnsupportedDocumentFormat rather
+            # than performing a partial write.
             if content is not None:
-                native_doc = "application/vnd.google-apps.document"
-                native_prefix = "application/vnd.google-apps."
-
                 try:
-                    file_mime = self.drive.get_file_info(doc_id).mime_type
-                except Exception as e:
-                    # Could not determine mimeType -> fall back to the legacy
-                    # Docs API path (preserves prior behavior for native docs).
-                    logger.warning(
-                        f"Could not determine mimeType for '{doc_id}', "
-                        f"assuming native Google Doc: {e}"
-                    )
-                    file_mime = native_doc
-
-                if file_mime == native_doc:
-                    # Native Google Doc -> Docs API (structured edit)
-                    if append:
-                        self.docs.append_text(doc_id, content)
-                    else:
-                        self.docs.replace_all_text(doc_id, content)
-                elif file_mime.startswith(native_prefix):
-                    # Other Google-native type (Sheets/Slides/...) is not
-                    # supported by this text-oriented update path. Fail cleanly
-                    # without any partial write.
+                    self.store.write(doc_id, content, append=append)
+                except UnsupportedDocumentFormat as e:
                     return UpdateDocumentResult(
                         success=False,
                         doc_id=doc_id,
                         updated_fields=updated_fields,
                         message=(
-                            f"このドキュメント (mimeType: {file_mime}) は "
+                            f"このドキュメント (mimeType: {e.mime_type}) は "
                             "smart_update_document のテキスト更新に対応していません。"
                             "対応するのは native Google Docs および "
                             "text/markdown・text/plain 等の非ネイティブテキストのみです。"
                         ),
-                    )
-                else:
-                    # Non-native file (text/markdown, text/plain, ...) ->
-                    # Drive media upload (full byte replacement, doc_id kept).
-                    if append:
-                        try:
-                            existing_text = self.drive.download_file_content(
-                                doc_id
-                            ).decode("utf-8")
-                        except Exception as e:
-                            logger.warning(
-                                f"Append download failed for '{doc_id}', "
-                                f"treating existing content as empty: {e}"
-                            )
-                            existing_text = ""
-                        new_content = existing_text + content
-                    else:
-                        new_content = content
-                    self.drive.update_file_content(
-                        doc_id, new_content, mime_type=file_mime
                     )
                 updated_fields.append("content")
 
@@ -503,30 +429,13 @@ class DocumentTools:
                     config = self.project_tools.get_project_config(project=project, user=user)
                 else:
                     config = self.project_tools.get_project_config(user=user)
-                if config and config.root_folder_id and doc_type_obj.folder_name:
+                if config and doc_type_obj.folder_name:
                     try:
-                        # Try to get cached folder ID first
-                        target_folder_id = doc_type_obj.get_folder_id(config.project_id)
-
-                        if not target_folder_id:
-                            # Folder ID not cached - create/find folder and cache
-                            folder_info, _ = self.drive.ensure_folder_path(
-                                path=doc_type_obj.folder_name,
-                                parent_id=config.root_folder_id,
-                            )
-                            if folder_info:
-                                target_folder_id = folder_info.file_id
-                                # Cache the folder ID
-                                doc_type_obj.set_folder_id(config.project_id, target_folder_id)
-                                self._save_document_type(doc_type_obj)
-
-                        if target_folder_id:
-                            # Move the document to the target folder
-                            self.drive.move_file(doc_id, target_folder_id)
-                            logger.info(
-                                f"Moved document '{doc_id}' to folder "
-                                f"'{doc_type_obj.folder_name}'"
-                            )
+                        doc_id = self.store.move(
+                            doc_id,
+                            project_id=config.project_id,
+                            folder_path=doc_type_obj.folder_name,
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to move document to new folder: {e}")
 
@@ -875,7 +784,7 @@ class DocumentTools:
                 return RegisterDocumentTypeResult(
                     success=False,
                     type_id=type_id,
-                    message=f"グローバルタイプの登録に失敗しました。",
+                    message="グローバルタイプの登録に失敗しました。",
                 )
 
             logger.info(f"Registered global document type '{type_id}' ({name})")
@@ -913,18 +822,13 @@ class DocumentTools:
 
             # Create folder in Google Drive if requested
             folder_created = False
-            if create_folder and config.root_folder_id:
+            if create_folder:
                 try:
-                    existing_folder = self.drive.find_folder_by_name(
-                        name=folder_name,
-                        parent_id=config.root_folder_id,
+                    folder_created = self.store.ensure_folder(
+                        project_id=config.project_id,
+                        folder_path=folder_name,
                     )
-                    if not existing_folder:
-                        self.drive.create_folder(
-                            name=folder_name,
-                            parent_id=config.root_folder_id,
-                        )
-                        folder_created = True
+                    if folder_created:
                         logger.info(f"Created folder '{folder_name}' for document type '{type_id}'")
                 except Exception as e:
                     logger.warning(f"Failed to create folder '{folder_name}': {e}")
@@ -1009,7 +913,7 @@ class DocumentTools:
                 return DeleteDocumentTypeResult(
                     success=False,
                     type_id=type_id,
-                    message=f"グローバルタイプの削除に失敗しました。",
+                    message="グローバルタイプの削除に失敗しました。",
                 )
 
             logger.info(f"Deleted global document type '{type_id}'")
@@ -1312,7 +1216,7 @@ class DocumentTools:
             # Step 4: Delete Drive file if requested
             if delete_drive_file:
                 try:
-                    self.drive.delete_file(doc_id, permanent=not soft_delete)
+                    self.store.delete(doc_id, permanent=not soft_delete)
                     drive_file_deleted = True
                 except Exception as e:
                     logger.warning(f"Failed to delete Drive file '{doc_id}': {e}")
