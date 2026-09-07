@@ -28,6 +28,10 @@ backend = "google"
 root = "/srv/docs"
 # Repository map. Empty = <root>/repos.toml
 repos_config = ""
+# Working tier: documents still being written (design 6.3.1). Outside Git.
+work_root = "/srv/docs-work"
+# How long a draft may sit in the working tier before reconcile() flags it
+stale_after_days = 14.0
 
 [log]
 # Log level: DEBUG, INFO, WARNING, ERROR

@@ -1473,11 +1473,13 @@ class PrismindServer:
                     repos_config=self.config.documents.repos_config or None,
                     project_tools=self._project_tools,
                     user_name=self.config.user_name,
+                    work_root=self.config.documents.work_root,
+                    stale_after_days=self.config.documents.stale_after_days,
                 )
                 logger.info(
                     "Document backend: filesystem "
-                    f"(root={self.config.documents.root}, read-only: no "
-                    "publisher configured)"
+                    f"(canonical={self.config.documents.root}, "
+                    f"working={self.config.documents.work_root})"
                 )
             else:
                 self._document_store = GoogleDocumentStore(

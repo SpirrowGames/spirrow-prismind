@@ -42,6 +42,8 @@ class DocumentsConfig:
     backend: Literal["google", "filesystem"] = "google"
     root: str = "/srv/docs"
     repos_config: str = ""  # Empty = <root>/repos.toml
+    work_root: str = "/srv/docs-work"  # Working tier (design 6.3.1)
+    stale_after_days: float = 14.0
 
 
 @dataclass
@@ -135,6 +137,12 @@ class Config:
                 backend=data.get("documents", {}).get("backend", "google"),
                 root=data.get("documents", {}).get("root", "/srv/docs"),
                 repos_config=data.get("documents", {}).get("repos_config", ""),
+                work_root=data.get("documents", {}).get(
+                    "work_root", "/srv/docs-work"
+                ),
+                stale_after_days=float(
+                    data.get("documents", {}).get("stale_after_days", 14.0)
+                ),
             ),
             log=LogConfig(
                 level=data.get("log", {}).get("level", "INFO"),
