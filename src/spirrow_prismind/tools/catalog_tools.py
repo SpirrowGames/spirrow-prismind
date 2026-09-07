@@ -15,6 +15,13 @@ from .project_tools import ProjectTools
 
 logger = logging.getLogger(__name__)
 
+# Statuses that mean "do not surface this any more". `archived` is what
+# DocumentStore.delete() writes as its reversible delete (design §6.3), and
+# `superseded` marks a document explicitly replaced by another. Both must
+# stay out of search results by default; `draft` must not, because a draft
+# is live work, which is exactly what people search for.
+DEAD_STATUSES = frozenset({"archived", "superseded"})
+
 
 class CatalogTools:
     """Tools for catalog management."""
@@ -51,7 +58,7 @@ class CatalogTools:
         phase_task: Optional[str] = None,
         feature: Optional[str] = None,
         reference_timing: Optional[str] = None,
-        status: str = "active",
+        status: Optional[str] = None,
         limit: int = 10,
         user: Optional[str] = None,
     ) -> SearchCatalogResult:
@@ -64,7 +71,9 @@ class CatalogTools:
             phase_task: Filter by phase-task
             feature: Filter by feature
             reference_timing: Filter by reference timing
-            status: Filter by status (active/archived/all)
+            status: Exact status to match. ``None`` (the default) returns
+                everything except ``archived`` and ``superseded``; ``"all"``
+                returns those too.
             limit: Maximum results
             user: User ID
             
@@ -125,7 +134,11 @@ class CatalogTools:
             
             if status != "all":
                 doc_status = meta.get("status", "active")
-                if doc_status != status:
+                if status is None:
+                    # Default: hide the dead, keep drafts.
+                    if doc_status in DEAD_STATUSES:
+                        continue
+                elif doc_status != status:
                     continue
             
             # Parse updated_at

@@ -858,6 +858,13 @@ TOOLS = [
                     "type": "string",
                     "description": "Feature filter",
                 },
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "Exact status to match. Omit to get everything except "
+                        "archived and superseded; 'all' includes those too."
+                    ),
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results",
@@ -2266,6 +2273,7 @@ class PrismindServer:
                 doc_type=args.get("doc_type"),
                 phase_task=args.get("phase_task"),
                 feature=args.get("feature"),
+                status=args.get("status"),
                 limit=args.get("limit", 10),
             )
             return {
