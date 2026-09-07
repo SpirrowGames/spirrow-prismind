@@ -4,7 +4,10 @@ import pytest
 from unittest.mock import MagicMock
 from dataclasses import dataclass
 
-from spirrow_prismind.integrations.document_store import StoredDoc
+from spirrow_prismind.integrations.document_store import (
+    DocumentStoreError,
+    StoredDoc,
+)
 
 
 @dataclass
@@ -820,3 +823,116 @@ class TestListDocumentTypes:
 
         # Cleanup
         GlobalDocumentTypeStorage.reset_instance()
+
+
+class TestDeleteDocumentRefusal:
+    """A store that refuses must not leave the document de-indexed.
+
+    Found on sg-ai-server-01. The filesystem store refuses to delete a
+    document that exists only in the canonical clone, because that is a Git
+    operation belonging in a pull request. The refusal happened after the
+    RAG entry had already been removed, and was swallowed as a warning — so
+    the caller got success: true, the file was still there, and the catalog
+    entry was gone. Findable no more, deleted not at all.
+    """
+
+    def _setup(self, project_tools, mock_rag_client, project, doc_id):
+        project_tools.setup_project(
+            project=project,
+            name=project,
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+        )
+        mock_rag_client.add_catalog_entry(
+            doc_id=doc_id,
+            name=doc_id,
+            doc_type="設計書",
+            project=project,
+            phase_task="P1-T01",
+            metadata={},
+        )
+
+    def _catalog_has(self, mock_rag_client, project, doc_id):
+        storage = mock_rag_client._storage[mock_rag_client.collection_name]
+        return f"catalog:{project}:{doc_id}" in storage
+
+    def test_a_refused_delete_reports_failure(
+        self, document_tools, mock_rag_client, mock_document_store, project_tools
+    ):
+        self._setup(project_tools, mock_rag_client, "ref_proj", "canon_doc")
+
+        def refuse(doc_id, *, permanent=False):
+            raise DocumentStoreError(
+                "'canon_doc' is canonical; deleting it has to go through a "
+                "pull request, not this store."
+            )
+
+        mock_document_store.delete = refuse
+
+        result = document_tools.delete_document(
+            doc_id="canon_doc",
+            project="ref_proj",
+            delete_drive_file=True,
+            soft_delete=False,
+        )
+
+        assert result.success is False
+        assert "pull request" in result.message
+
+    def test_a_refused_delete_leaves_the_catalog_entry_alone(
+        self, document_tools, mock_rag_client, mock_document_store, project_tools
+    ):
+        """The important half: no silent de-indexing."""
+        self._setup(project_tools, mock_rag_client, "ref2_proj", "canon2_doc")
+        assert self._catalog_has(mock_rag_client, "ref2_proj", "canon2_doc")
+
+        def refuse(doc_id, *, permanent=False):
+            raise DocumentStoreError("canonical; use a pull request")
+
+        mock_document_store.delete = refuse
+
+        document_tools.delete_document(
+            doc_id="canon2_doc",
+            project="ref2_proj",
+            delete_drive_file=True,
+            soft_delete=False,
+        )
+
+        assert self._catalog_has(mock_rag_client, "ref2_proj", "canon2_doc"), (
+            "the document still exists, so it must still be findable"
+        )
+
+    def test_a_successful_delete_still_clears_the_catalog(
+        self, document_tools, mock_rag_client, mock_document_store, project_tools
+    ):
+        self._setup(project_tools, mock_rag_client, "ok_proj", "ok_doc")
+
+        result = document_tools.delete_document(
+            doc_id="ok_doc",
+            project="ok_proj",
+            delete_drive_file=True,
+            soft_delete=False,
+        )
+
+        assert result.success is True
+        assert result.drive_file_deleted is True
+        assert mock_document_store.deleted == [("ok_doc", True)]
+        assert not self._catalog_has(mock_rag_client, "ok_proj", "ok_doc")
+
+    def test_delete_without_touching_the_store_still_de_indexes(
+        self, document_tools, mock_rag_client, mock_document_store, project_tools
+    ):
+        """delete_drive_file=False is a de-index on purpose; keep it working."""
+        self._setup(project_tools, mock_rag_client, "idx_proj", "idx_doc")
+
+        result = document_tools.delete_document(
+            doc_id="idx_doc",
+            project="idx_proj",
+            delete_drive_file=False,
+        )
+
+        assert result.success is True
+        assert mock_document_store.deleted == []
+        assert not self._catalog_has(mock_rag_client, "idx_proj", "idx_doc")

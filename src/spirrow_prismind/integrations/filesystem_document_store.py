@@ -400,10 +400,25 @@ class FilesystemDocumentStore(DocumentStore):
                 yield path, frontmatter, body
 
     def _resolve_path(self, doc_id: str) -> Path:
+        """Locate a document, rebuilding the index when the cache is stale.
+
+        Both misses have to trigger a rebuild, not just the obvious one:
+
+        - the id is absent, because the document was created since the walk;
+        - the id is present but the file is gone, because something outside
+          this process moved or removed it.
+
+        The second is the normal path, not an edge case. ``reconcile`` runs
+        in the sync job -- a separate process -- and removes the working
+        copy of every document whose pull request has merged, so this
+        process's cache still points at a file that no longer exists. Only
+        refreshing on ``path is None`` left those documents unreadable until
+        a restart while ``search_catalog`` went on listing them: findable
+        but unopenable, and no way back.
+        """
         index = self._index()
         path = index.get(doc_id)
-        if path is None:
-            # A document created since the last walk is not in the cache.
+        if path is None or not path.exists():
             index = self._index(refresh=True)
             path = index.get(doc_id)
         if path is None or not path.exists():

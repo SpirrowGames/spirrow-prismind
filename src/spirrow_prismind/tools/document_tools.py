@@ -1188,12 +1188,41 @@ class DocumentTools:
         knowledge_deleted_count = 0
 
         try:
-            # Step 2: Delete RAG catalog entry
+            # Step 2: Remove the document itself, before any index entry.
+            #
+            # The store can refuse -- the filesystem backend does, for a
+            # document that exists only in the canonical clone, because
+            # deleting it is a Git operation that belongs in a pull request.
+            # De-indexing first and discovering that afterwards left the
+            # document in place, absent from the catalog, and the caller
+            # told the delete had succeeded.
+            if delete_drive_file:
+                try:
+                    self.store.delete(doc_id, permanent=not soft_delete)
+                    drive_file_deleted = True
+                except Exception as e:
+                    logger.warning(f"Failed to delete document '{doc_id}': {e}")
+                    return DeleteDocumentResult(
+                        success=False,
+                        doc_id=doc_id,
+                        project=project,
+                        catalog_deleted=False,
+                        sheet_row_deleted=False,
+                        drive_file_deleted=False,
+                        knowledge_deleted_count=0,
+                        message=f"ドキュメントの削除に失敗しました: {e}",
+                    )
+
+            # Step 3: Delete RAG catalog entry
             rag_result = self.rag.delete_catalog_entry(doc_id, project)
             catalog_deleted = rag_result.success
 
-            # Step 3: Delete from Google Sheets catalog
-            config = self.project_tools.get_project_config(user=user)
+            # Step 4: Delete from Google Sheets catalog.
+            # project, not the current one: deleting a document in another
+            # project used to leave its row behind.
+            config = self.project_tools.get_project_config(
+                project=project, user=user
+            )
             if config and config.spreadsheet_id:
                 try:
                     # Find the row by doc_id (column C, index 2)
@@ -1212,14 +1241,6 @@ class DocumentTools:
                         sheet_row_deleted = True
                 except Exception as e:
                     logger.warning(f"Failed to delete Sheets row for '{doc_id}': {e}")
-
-            # Step 4: Delete Drive file if requested
-            if delete_drive_file:
-                try:
-                    self.store.delete(doc_id, permanent=not soft_delete)
-                    drive_file_deleted = True
-                except Exception as e:
-                    logger.warning(f"Failed to delete Drive file '{doc_id}': {e}")
 
             # Step 5: Delete related knowledge entries
             knowledge_deleted_count = self.rag.delete_knowledge_by_doc_id(doc_id, project)
