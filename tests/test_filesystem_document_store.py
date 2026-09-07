@@ -1,6 +1,7 @@
 """Tests for FilesystemDocumentStore, against a real temporary filesystem."""
 
 import os
+import time
 
 import pytest
 
@@ -10,7 +11,6 @@ from spirrow_prismind.integrations.document_store import (
 )
 from spirrow_prismind.integrations.filesystem_document_store import (
     FilesystemDocumentStore,
-    NullPublisher,
     parse_frontmatter,
     render_frontmatter,
 )
@@ -55,7 +55,7 @@ def root(tmp_path):
 @pytest.fixture
 def store(root):
     return FilesystemDocumentStore(
-        root=str(root), publisher=NullPublisher(), user_name="test_user"
+        root=str(root), work_root=str(root / "_work"), user_name="test_user"
     )
 
 
@@ -146,7 +146,9 @@ class TestScan:
 
 
 class TestWrites:
-    def test_create_writes_file_with_frontmatter(self, store, root):
+    """Writes land in the working tier, never in the canonical clone."""
+
+    def test_create_writes_into_the_working_tier(self, store, root):
         doc = store.create(
             project_id="spirrow-docs",
             folder_path="conventions",
@@ -155,13 +157,20 @@ class TestWrites:
             frontmatter={"product": "platform", "type": "convention"},
         )
 
-        path = root / "spirrow-docs/docs/conventions/Document-Conventions.md"
-        assert path.exists()
-        text = path.read_text(encoding="utf-8")
+        working = (
+            root / "_work/spirrow-docs/docs/conventions/Document-Conventions.md"
+        )
+        canonical = (
+            root / "spirrow-docs/docs/conventions/Document-Conventions.md"
+        )
+        assert working.exists()
+        assert not canonical.exists(), "the clone must stay clean"
+
+        text = working.read_text(encoding="utf-8")
         assert text.startswith("---\n")
         assert "# 規約" in text
         assert doc.frontmatter["title"] == "Document Conventions"
-        # Readable straight back by the id it was given
+        # Readable straight back, without the caller knowing which tier
         assert store.read(doc.doc_id).body.strip() == "# 規約"
 
     def test_create_refuses_to_clobber(self, store):
@@ -179,8 +188,21 @@ class TestWrites:
                 content="b",
             )
 
-    def test_write_replaces_body_and_keeps_frontmatter(self, store):
+    def test_editing_a_canonical_doc_copies_it_first(self, store, root):
+        """Copy-on-write: the clone is untouched, the edit is in working."""
+        canonical = (
+            root / "spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        )
+        before = canonical.read_text(encoding="utf-8")
+
         store.write("platform:docs-infrastructure-design", "# 差し替え\n")
+
+        assert canonical.read_text(encoding="utf-8") == before
+        working = (
+            root
+            / "_work/spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        )
+        assert working.exists()
 
         doc = store.read("platform:docs-infrastructure-design")
         assert doc.body.strip() == "# 差し替え"
@@ -196,36 +218,67 @@ class TestWrites:
         after = store.read("platform:docs-infrastructure-design").body
         assert after == before + "追記\n"
 
-    def test_delete_archives_by_default(self, store, root):
+    def test_second_edit_stays_in_the_working_copy(self, store):
+        store.write("platform:docs-infrastructure-design", "one\n")
+        store.write("platform:docs-infrastructure-design", "two\n")
+
+        assert store.read(
+            "platform:docs-infrastructure-design"
+        ).body.strip() == "two"
+
+    def test_delete_archives_the_working_copy(self, store, root):
+        store.write("platform:docs-infrastructure-design", "draft\n")
+
         store.delete("platform:docs-infrastructure-design")
 
-        path = root / "spirrow-docs/docs/platform/docs-infrastructure-design.md"
-        assert path.exists()
         assert store.read(
             "platform:docs-infrastructure-design"
         ).frontmatter["status"] == "archived"
+        assert (
+            root / "spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        ).exists(), "canonical untouched"
 
-    def test_delete_permanent_unlinks(self, store, root):
+    def test_delete_permanent_unlinks_the_working_copy_only(self, store, root):
+        store.write("platform:docs-infrastructure-design", "draft\n")
+
         store.delete("platform:docs-infrastructure-design", permanent=True)
 
-        path = root / "spirrow-docs/docs/platform/docs-infrastructure-design.md"
-        assert not path.exists()
+        assert not (
+            root
+            / "_work/spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        ).exists()
+        # canonical is still there, so the id still resolves
+        assert store.read("platform:docs-infrastructure-design") is not None
 
-    def test_move_relocates_and_keeps_id(self, store, root):
-        returned = store.move(
-            "platform:docs-infrastructure-design",
+    def test_delete_refuses_on_a_canonical_only_document(self, store):
+        with pytest.raises(DocumentStoreError, match="pull request"):
+            store.delete("platform:docs-infrastructure-design")
+
+    def test_move_refuses_on_a_canonical_only_document(self, store):
+        with pytest.raises(DocumentStoreError, match="pull request"):
+            store.move(
+                "platform:docs-infrastructure-design",
+                project_id="spirrow-docs",
+                folder_path="archive",
+            )
+
+    def test_move_relocates_a_working_document(self, store, root):
+        doc = store.create(
             project_id="spirrow-docs",
-            folder_path="archive",
+            folder_path="notes",
+            name="Draft Note",
+            content="body",
         )
 
-        assert returned == "platform:docs-infrastructure-design"
-        assert (
-            root / "spirrow-docs/docs/archive/docs-infrastructure-design.md"
-        ).exists()
+        returned = store.move(
+            doc.doc_id, project_id="spirrow-docs", folder_path="archive"
+        )
+
+        assert returned == doc.doc_id
+        assert (root / "_work/spirrow-docs/docs/archive/Draft-Note.md").exists()
         assert not (
-            root / "spirrow-docs/docs/platform/docs-infrastructure-design.md"
+            root / "_work/spirrow-docs/docs/notes/Draft-Note.md"
         ).exists()
-        assert store.read("platform:docs-infrastructure-design") is not None
 
     def test_ensure_folder_reports_creation(self, store):
         assert store.ensure_folder(
@@ -236,37 +289,136 @@ class TestWrites:
         ) is False
 
 
-class TestReadOnlyWithoutPublisher:
-    """No publisher -> no writes, so the sync clone never goes dirty."""
+class TestTwoTierReads:
+    """The caller never learns which tier answered."""
 
-    def test_reads_still_work(self, read_only_store):
-        assert read_only_store.read(
+    def test_a_working_document_is_readable_and_scannable(self, store):
+        doc = store.create(
+            project_id="spirrow-docs",
+            folder_path="notes",
+            name="Working Note",
+            content="draft body",
+        )
+
+        assert store.read(doc.doc_id).body.strip() == "draft body"
+        assert doc.doc_id in {d.doc_id for d in store.scan("spirrow-docs")}
+
+    def test_working_shadows_canonical_for_the_same_id(self, store):
+        store.write("platform:docs-infrastructure-design", "newer\n")
+
+        assert store.read(
             "platform:docs-infrastructure-design"
-        ).title
-        assert len(read_only_store.scan("spirrow-docs")) == 2
+        ).body.strip() == "newer"
+        ids = [d.doc_id for d in store.scan("spirrow-docs")]
+        assert ids.count("platform:docs-infrastructure-design") == 1
 
-    @pytest.mark.parametrize(
-        "call",
-        [
-            lambda s: s.create(
-                project_id="spirrow-docs",
-                folder_path="x",
-                name="n",
-                content="c",
-            ),
-            lambda s: s.write("platform:docs-infrastructure-design", "c"),
-            lambda s: s.delete("platform:docs-infrastructure-design"),
-            lambda s: s.move(
-                "platform:docs-infrastructure-design",
-                project_id="spirrow-docs",
-                folder_path="x",
-            ),
-        ],
-        ids=["create", "write", "delete", "move"],
-    )
-    def test_writes_refuse(self, read_only_store, call):
-        with pytest.raises(DocumentStoreError, match="read-only"):
-            call(read_only_store)
+    def test_scan_covers_both_tiers_without_duplicates(self, store):
+        before = {d.doc_id for d in store.scan("spirrow-docs")}
+        new = store.create(
+            project_id="spirrow-docs",
+            folder_path="notes",
+            name="Extra",
+            content="x",
+        )
+
+        after = {d.doc_id for d in store.scan("spirrow-docs")}
+        assert after == before | {new.doc_id}
+
+
+class TestReconcile:
+    """Sync-time reconciliation (design 6.4.1)."""
+
+    def _mirror_canonical_into_working(self, root):
+        canonical = (
+            root / "spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        )
+        working = (
+            root
+            / "_work/spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        )
+        working.parent.mkdir(parents=True, exist_ok=True)
+        working.write_text(
+            canonical.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        return working
+
+    def test_a_promoted_document_is_removed_from_working(self, store, root):
+        """Identical bodies mean the pull request landed."""
+        working = self._mirror_canonical_into_working(root)
+
+        entries = store.reconcile("spirrow-docs")
+
+        promoted = [e for e in entries if e.state == "promoted"]
+        assert [e.doc_id for e in promoted] == [
+            "platform:docs-infrastructure-design"
+        ]
+        assert not working.exists()
+        # still readable, from canonical now
+        assert store.read("platform:docs-infrastructure-design") is not None
+
+    def test_a_diverged_document_is_kept_and_reported(self, store, root):
+        """An edit made after the pull request must not be deleted."""
+        store.write("platform:docs-infrastructure-design", "edited after PR\n")
+        working = (
+            root
+            / "_work/spirrow-docs/docs/platform/docs-infrastructure-design.md"
+        )
+
+        entries = store.reconcile("spirrow-docs")
+
+        diverged = [e for e in entries if e.state == "diverged"]
+        assert [e.doc_id for e in diverged] == [
+            "platform:docs-infrastructure-design"
+        ]
+        assert working.exists(), "the edit must survive"
+        assert store.read(
+            "platform:docs-infrastructure-design"
+        ).body.strip() == "edited after PR"
+
+    def test_a_draft_not_yet_in_canonical_is_left_alone(self, store):
+        doc = store.create(
+            project_id="spirrow-docs",
+            folder_path="notes",
+            name="Still Drafting",
+            content="wip",
+        )
+
+        entries = store.reconcile("spirrow-docs")
+
+        drafts = [e for e in entries if e.state == "draft"]
+        assert [e.doc_id for e in drafts] == [doc.doc_id]
+        assert drafts[0].stale is False
+        assert store.read(doc.doc_id) is not None
+
+    def test_an_old_draft_is_flagged_stale(self, store, root):
+        """The check ADR-2026-06-04-18 and -08-25-20 both needed."""
+        doc = store.create(
+            project_id="spirrow-docs",
+            folder_path="notes",
+            name="Stranded",
+            content="wip",
+        )
+        path = root / "_work/spirrow-docs/docs/notes/Stranded.md"
+        old = time.time() - 90 * 86400
+        os.utime(path, (old, old))
+
+        entries = store.reconcile("spirrow-docs")
+
+        stranded = next(e for e in entries if e.doc_id == doc.doc_id)
+        assert stranded.state == "draft"
+        assert stranded.stale is True
+        assert stranded.age_days > 89
+
+    def test_remove_promoted_false_reports_without_deleting(self, store, root):
+        working = self._mirror_canonical_into_working(root)
+
+        entries = store.reconcile("spirrow-docs", remove_promoted=False)
+
+        assert [e.state for e in entries] == ["promoted"]
+        assert working.exists()
+
+    def test_reconcile_is_quiet_when_nothing_is_in_working(self, store):
+        assert store.reconcile("spirrow-docs") == []
 
 
 class TestRepoResolution:
@@ -284,7 +436,6 @@ class TestRepoResolution:
         store = FilesystemDocumentStore(
             root=str(root),
             project_tools=StubProjectTools(),
-            publisher=NullPublisher(),
         )
 
         assert len(store.scan("spirrow-voxelworld")) == 2
@@ -292,7 +443,7 @@ class TestRepoResolution:
     def test_missing_repos_toml_falls_back_to_directory_names(self, root):
         (root / "repos.toml").unlink()
 
-        store = FilesystemDocumentStore(root=str(root))
+        store = FilesystemDocumentStore(root=str(root), work_root=str(root / "_work"))
 
         assert "spirrow-docs" in store.repos
         assert len(store.scan("spirrow-docs")) == 2
@@ -347,7 +498,7 @@ class TestDocsDirsOverride:
         return tmp_path
 
     def test_scan_finds_every_configured_directory(self, multi_root):
-        store = FilesystemDocumentStore(root=str(multi_root))
+        store = FilesystemDocumentStore(root=str(multi_root), work_root=str(multi_root / "_work"))
 
         ids = {d.doc_id for d in store.scan("spirrow-voxelworld")}
 
@@ -363,21 +514,21 @@ class TestDocsDirsOverride:
             '[repos]\nspirrow-voxelworld = "Spirrow-VoxelWorld"\n',
             encoding="utf-8",
         )
-        store = FilesystemDocumentStore(root=str(multi_root))
+        store = FilesystemDocumentStore(root=str(multi_root), work_root=str(multi_root / "_work"))
 
         assert [d.doc_id for d in store.scan("spirrow-voxelworld")] == [
             "spirrow-voxelworld:branching"
         ]
 
     def test_reads_by_id_across_directories(self, multi_root):
-        store = FilesystemDocumentStore(root=str(multi_root))
+        store = FilesystemDocumentStore(root=str(multi_root), work_root=str(multi_root / "_work"))
 
         assert store.read("voxelworld:lod-implementation-spec").title == "LOD 実装仕様"
         assert "EPHEMERAL" in store.read("spirrow-voxelworld:branching").body
 
     def test_first_entry_is_where_writes_go(self, multi_root):
         store = FilesystemDocumentStore(
-            root=str(multi_root), publisher=NullPublisher()
+            root=str(multi_root), work_root=str(multi_root / "_work")
         )
 
         store.create(
@@ -387,8 +538,18 @@ class TestDocsDirsOverride:
             content="body",
         )
 
-        assert (multi_root / "Spirrow-VoxelWorld/Specs/New-Spec.md").exists()
-        assert not (multi_root / "Spirrow-VoxelWorld/docs/New-Spec.md").exists()
+        # The working tier mirrors the canonical layout, so promotion is a
+        # straight copy back into the right docs_dir. It is named by the
+        # repo id, not the clone directory -- "spirrow-voxelworld", not
+        # "Spirrow-VoxelWorld". On a case-folding filesystem the two are
+        # the same path, so assert the exact name.
+        work_repo = multi_root / "_work" / "spirrow-voxelworld"
+        assert [p.name for p in (multi_root / "_work").iterdir()] == [
+            "spirrow-voxelworld"
+        ]
+        assert (work_repo / "Specs/New-Spec.md").exists()
+        assert not (work_repo / "docs/New-Spec.md").exists()
+        assert not (multi_root / "Spirrow-VoxelWorld/Specs/New-Spec.md").exists()
 
     def test_a_bare_string_is_accepted(self, multi_root):
         (multi_root / "repos.toml").write_text(
@@ -396,13 +557,13 @@ class TestDocsDirsOverride:
             '\n[docs_dirs]\nspirrow-voxelworld = "Specs"\n',
             encoding="utf-8",
         )
-        store = FilesystemDocumentStore(root=str(multi_root))
+        store = FilesystemDocumentStore(root=str(multi_root), work_root=str(multi_root / "_work"))
 
         assert store.docs_dirs("spirrow-voxelworld") == ["Specs"]
         assert len(store.scan("spirrow-voxelworld")) == 2
 
     def test_default_is_lowercase_docs(self, root):
-        assert FilesystemDocumentStore(root=str(root)).docs_dirs("spirrow-docs") == [
+        assert FilesystemDocumentStore(root=str(root), work_root=str(root / "_work")).docs_dirs("spirrow-docs") == [
             "docs"
         ]
 
@@ -429,7 +590,7 @@ class TestDocsDirsOverride:
             encoding="utf-8",
         )
 
-        store = FilesystemDocumentStore(root=str(tmp_path))
+        store = FilesystemDocumentStore(root=str(tmp_path), work_root=str(tmp_path / "_work"))
 
         assert {d.doc_id for d in store.scan("spirrow-voxelworld")} == {
             "voxelworld:spec",
@@ -441,7 +602,7 @@ class TestReposConfigReload:
     """A repository added to repos.toml is picked up without a restart."""
 
     def test_new_repo_appears_without_restart(self, root):
-        store = FilesystemDocumentStore(root=str(root))
+        store = FilesystemDocumentStore(root=str(root), work_root=str(root / "_work"))
         assert "extra-repo" not in store.repos
 
         extra = root / "extra-repo" / "docs"
@@ -462,7 +623,7 @@ class TestReposConfigReload:
         assert [d.doc_id for d in store.scan("extra-repo")] == ["extra:note"]
 
     def test_unchanged_config_is_not_reloaded(self, root):
-        store = FilesystemDocumentStore(root=str(root))
+        store = FilesystemDocumentStore(root=str(root), work_root=str(root / "_work"))
         first = store.repos
 
         assert store.repos is first

@@ -1,13 +1,31 @@
 """Filesystem implementation of :class:`DocumentStore`.
 
-Documents are Markdown files with YAML frontmatter, laid out as::
+Documents are Markdown files with YAML frontmatter, and they live in one of
+two tiers (design §6.3.1):
 
-    <root>/<repo>/docs/<folder_path>/<slug>.md
-
+**canonical** -- ``<root>/<repo>/<docs_dir>/<folder_path>/<slug>.md``.
 ``<root>`` is ``/srv/docs`` on sg-ai-server-01, holding one Git clone per
-repository listed in ``repos.toml``. A systemd timer keeps those clones
-current with ``git pull --ff-only``; this store is the read side of that
-arrangement, and :class:`DocumentPublisher` is the write side.
+repository listed in ``repos.toml``. A systemd timer advances those clones
+with ``git pull --ff-only``, so nothing writes into them: a dirty tree
+stalls the sync.
+
+**working** -- ``<work_root>/<repo>/<docs_dir>/<folder_path>/<slug>.md``.
+``<work_root>`` is ``/srv/docs-work``, outside Git, holding documents that
+are still being written. Every write lands here. Promotion to canonical is
+an explicit pull request, once the document is settled.
+
+The layout mirrors canonical so promotion is a straight copy, including
+which ``docs_dir`` a document belongs in -- Spirrow-VoxelWorld has two.
+
+Callers do not see the distinction. ``read`` and ``scan`` cover both tiers;
+``get_document(doc_id)`` never reveals which one answered. That is what
+makes two tiers viable at all, and it is why writes do not have to become
+pull requests -- see §9.14 for why that earlier design was retracted.
+
+A document in both tiers is reconciled by :meth:`reconcile`, which the sync
+job runs after pulling. Reconciliation is at sync time rather than at merge
+time on purpose: deleting the working copy the moment a pull request merges
+would leave the document invisible until the next pull.
 
 Repository map (``/srv/docs/repos.toml``)::
 
@@ -20,7 +38,8 @@ Repository map (``/srv/docs/repos.toml``)::
 
 The ``[repos]`` key is the repository identifier a project points at (its
 ``root_folder_id``, reused as a repo id in filesystem mode -- design §6.2);
-the value is the clone's directory name under ``<root>``.
+the value is the clone's directory name under ``<root>``. Keep the key equal
+to the Magickit project id: the working tier is named by it.
 
 ``[docs_dirs]`` is optional and names the directories inside a clone that
 hold documents. It defaults to ``["docs"]``. Spirrow-VoxelWorld needs it:
@@ -32,9 +51,10 @@ The first entry is where new documents are written.
 
 import logging
 import re
-from abc import ABC, abstractmethod
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 try:
     import tomllib
@@ -59,48 +79,31 @@ logger = logging.getLogger(__name__)
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.DOTALL)
 MARKDOWN_MIME = "text/markdown"
 
+WORKING = "working"
+CANONICAL = "canonical"
 
-class DocumentPublisher(ABC):
-    """Gets filesystem writes back into Git.
 
-    Writing straight into a clone that a timer advances with
-    ``git pull --ff-only`` would leave that clone dirty and stall the sync,
-    so a store with no publisher refuses to write at all rather than
-    corrupt the sync loop.
+@dataclass
+class ReconcileEntry:
+    """One working-tier document, as :meth:`reconcile` found it.
 
-    Design §6.3 fixes the contract: a write becomes a working branch plus a
-    pull request; it is never committed to the clone's checked-out branch
-    and never auto-merged.
+    ``state`` is one of:
+
+    - ``"promoted"`` -- the same id is in canonical with the same body. The
+      working copy was removed (unless ``remove_promoted=False``).
+    - ``"diverged"`` -- the id is in canonical but the bodies differ. The
+      working copy is kept: someone edited it after opening the pull
+      request, and deleting it would lose that edit.
+    - ``"draft"`` -- not in canonical yet. ``stale`` says whether it has sat
+      here longer than the threshold.
     """
 
-    @abstractmethod
-    def publish(
-        self, repo: str, paths: Sequence[Path], message: str
-    ) -> Optional[str]:
-        """Publish changed paths for one repository.
-
-        Returns:
-            A pull request URL, or None if the publisher batches instead of
-            opening one per call.
-        """
-        ...
-
-
-class NullPublisher(DocumentPublisher):
-    """Leaves writes in the working tree and says so.
-
-    Only for a scratch ``root`` that is not a synced clone -- tests, or a
-    local experiment. Configure it deliberately; it is not the default.
-    """
-
-    def publish(
-        self, repo: str, paths: Sequence[Path], message: str
-    ) -> Optional[str]:
-        logger.warning(
-            f"NullPublisher: {len(paths)} path(s) in '{repo}' left uncommitted "
-            f"({message}). Nothing will reach Git."
-        )
-        return None
+    doc_id: str
+    state: str
+    working_path: str
+    canonical_path: Optional[str] = None
+    age_days: float = 0.0
+    stale: bool = False
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -139,35 +142,39 @@ def render_frontmatter(frontmatter: dict[str, Any], body: str) -> str:
 
 
 class FilesystemDocumentStore(DocumentStore):
-    """Documents stored as Markdown files in Git-synced clones."""
+    """Documents as Markdown files, across a working and a canonical tier."""
 
     def __init__(
         self,
         root: str = "/srv/docs",
         repos_config: Optional[str] = None,
         project_tools: Optional["ProjectTools"] = None,
-        publisher: Optional[DocumentPublisher] = None,
         user_name: str = "default",
+        work_root: str = "/srv/docs-work",
+        stale_after_days: float = 14.0,
     ):
         """Initialize the filesystem store.
 
         Args:
-            root: Directory holding one clone per repository.
+            root: Directory holding one Git clone per repository. Read-only:
+                the sync timer owns it.
             repos_config: Path to ``repos.toml``. Defaults to
                 ``<root>/repos.toml``.
             project_tools: Used to map a project to its repository. Without
                 it, a project id is taken to be a repository id directly.
-            publisher: How writes reach Git. ``None`` makes the store
-                read-only.
             user_name: Default user ID for project config lookups.
+            work_root: Directory holding the working tier, outside Git.
+            stale_after_days: How long a draft may sit in the working tier
+                before :meth:`reconcile` flags it.
         """
         self.root = Path(root)
+        self.work_root = Path(work_root)
         self.repos_config = (
             Path(repos_config) if repos_config else self.root / "repos.toml"
         )
         self.project_tools = project_tools
-        self.publisher = publisher
         self.user_name = user_name
+        self.stale_after_days = stale_after_days
         self._repos: Optional[dict[str, str]] = None
         self._docs_dirs: dict[str, list[str]] = {}
         # mtime of repos.toml when it was last read, so a repository added
@@ -259,42 +266,54 @@ class FilesystemDocumentStore(DocumentStore):
             f"repository id, or add the repository to repos.toml."
         )
 
-    def _repo_dir(self, repo: str) -> Path:
-        directory = self.repos.get(repo, repo)
-        return self.root / directory
+    def _repo_dir(self, repo: str, tier: str = CANONICAL) -> Path:
+        if tier == WORKING:
+            # The working tier is named by the repo id, not the clone's
+            # directory name, so it does not inherit GitHub's casing.
+            return self.work_root / repo
+        return self.root / self.repos.get(repo, repo)
 
-    def _docs_dir(self, repo: str) -> Path:
-        """Where new documents are written: the first configured directory."""
-        return self._repo_dir(repo) / self.docs_dirs(repo)[0]
+    def _docs_dir(self, repo: str, tier: str = CANONICAL) -> Path:
+        """Where new documents go: the first configured directory."""
+        return self._repo_dir(repo, tier) / self.docs_dirs(repo)[0]
 
-    def _docs_dir_paths(self, repo: str) -> list[Path]:
+    def _docs_dir_paths(self, repo: str, tier: str = CANONICAL) -> list[Path]:
         """Every configured document directory, in order."""
-        repo_dir = self._repo_dir(repo)
+        repo_dir = self._repo_dir(repo, tier)
         return [repo_dir / name for name in self.docs_dirs(repo)]
 
     def _docs_dir_of(self, repo: str, path: Path) -> Path:
-        """Which configured directory a path lives under.
+        """Which configured directory a path lives under, in either tier.
 
-        Falls back to the primary one so a caller always gets a usable base
-        for relative-path work.
+        Falls back to the canonical primary so a caller always gets a
+        usable base for relative-path work.
         """
-        for candidate in self._docs_dir_paths(repo):
-            try:
-                path.relative_to(candidate)
-            except ValueError:
-                continue
-            return candidate
+        for tier in (CANONICAL, WORKING):
+            for candidate in self._docs_dir_paths(repo, tier):
+                try:
+                    path.relative_to(candidate)
+                except ValueError:
+                    continue
+                return candidate
         return self._docs_dir(repo)
 
-    def _require_writable(self) -> DocumentPublisher:
-        if self.publisher is None:
-            raise DocumentStoreError(
-                "This FilesystemDocumentStore is read-only: no publisher is "
-                "configured. Writing into a clone that the sync timer "
-                "advances with `git pull --ff-only` would stall the sync, so "
-                "writes require a DocumentPublisher (design §6.3)."
-            )
-        return self.publisher
+    def _tier_of(self, path: Path) -> str:
+        try:
+            path.relative_to(self.work_root)
+        except ValueError:
+            return CANONICAL
+        return WORKING
+
+    def _working_twin(self, repo: str, canonical_path: Path) -> Path:
+        """Where ``canonical_path`` would live in the working tier.
+
+        The two layouts mirror each other, so this preserves both the
+        ``docs_dir`` a document belongs in and its folder path -- promotion
+        is then a straight copy back.
+        """
+        base = self._docs_dir_of(repo, canonical_path)
+        relative = canonical_path.relative_to(base)
+        return self._repo_dir(repo, WORKING) / base.name / relative
 
     # ------------------------------------------------------------------
     # Index
@@ -330,29 +349,42 @@ class FilesystemDocumentStore(DocumentStore):
         return [self._repo_for_project(project_id)]
 
     def _index(self, refresh: bool = False) -> dict[str, Path]:
-        """Build (or reuse) the ``doc_id -> path`` map across all repos."""
+        """Build (or reuse) the ``doc_id -> path`` map across both tiers.
+
+        The working tier is indexed last and wins: if a document is in both,
+        the working copy is the more recent edit. A pair that should not
+        persist is what :meth:`reconcile` resolves.
+        """
         if self._index_cache is not None and not refresh:
             return self._index_cache
 
         index: dict[str, Path] = {}
-        for repo in self.repos:
-            for path, frontmatter, _ in self._walk(repo):
-                doc_id = self._doc_id_for(repo, path, frontmatter)
-                if doc_id in index and index[doc_id] != path:
-                    logger.warning(
-                        f"Duplicate doc_id '{doc_id}': {index[doc_id]} and "
-                        f"{path}. Keeping the first."
-                    )
-                    continue
-                index[doc_id] = path
+        for tier in (CANONICAL, WORKING):
+            for repo in self.repos:
+                for path, frontmatter, _ in self._walk(repo, tier):
+                    doc_id = self._doc_id_for(repo, path, frontmatter)
+                    previous = index.get(doc_id)
+                    if (
+                        previous is not None
+                        and previous != path
+                        and self._tier_of(previous) == tier
+                    ):
+                        logger.warning(
+                            f"Duplicate doc_id '{doc_id}' within {tier}: "
+                            f"{previous} and {path}. Keeping the first."
+                        )
+                        continue
+                    index[doc_id] = path
 
         self._index_cache = index
         return index
 
-    def _walk(self, repo: str):
+    def _walk(
+        self, repo: str, tier: str = CANONICAL
+    ) -> Iterator[tuple[Path, dict, str]]:
         """Yield ``(path, frontmatter, body)`` for each Markdown file."""
         seen: set[Path] = set()
-        for docs_dir in self._docs_dir_paths(repo):
+        for docs_dir in self._docs_dir_paths(repo, tier):
             if not docs_dir.exists():
                 continue
             for path in sorted(docs_dir.rglob("*.md")):
@@ -379,13 +411,13 @@ class FilesystemDocumentStore(DocumentStore):
         return path
 
     def _repo_of_path(self, path: Path) -> str:
-        for repo in self.repos:
-            repo_dir = self._repo_dir(repo)
-            try:
-                path.relative_to(repo_dir)
-            except ValueError:
-                continue
-            return repo
+        for tier in (CANONICAL, WORKING):
+            for repo in self.repos:
+                try:
+                    path.relative_to(self._repo_dir(repo, tier))
+                except ValueError:
+                    continue
+                return repo
         raise DocumentStoreError(f"Path '{path}' is not inside any known repo")
 
     def _to_stored(self, repo: str, path: Path) -> StoredDoc:
@@ -393,8 +425,9 @@ class FilesystemDocumentStore(DocumentStore):
         frontmatter, body = parse_frontmatter(text)
         doc_id = self._doc_id_for(repo, path, frontmatter)
         title = str(frontmatter.get("title") or path.stem)
+        root = self.work_root if self._tier_of(path) == WORKING else self.root
         try:
-            relative = path.relative_to(self.root).as_posix()
+            relative = path.relative_to(root).as_posix()
         except ValueError:
             relative = path.as_posix()
         return StoredDoc(
@@ -420,10 +453,9 @@ class FilesystemDocumentStore(DocumentStore):
         content: str,
         frontmatter: Optional[dict[str, Any]] = None,
     ) -> StoredDoc:
-        publisher = self._require_writable()
         repo = self._repo_for_project(project_id)
 
-        target_dir = self._docs_dir(repo)
+        target_dir = self._docs_dir(repo, WORKING)
         if folder_path:
             target_dir = target_dir / Path(folder_path.strip("/"))
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -436,7 +468,7 @@ class FilesystemDocumentStore(DocumentStore):
         frontmatter.setdefault("title", name)
         if "id" not in frontmatter:
             product = str(frontmatter.get("product") or repo)
-            relative = path.relative_to(self._docs_dir_of(repo, path))
+            relative = path.relative_to(self._docs_dir(repo, WORKING))
             frontmatter["id"] = (
                 f"{product}:{'/'.join(relative.with_suffix('').parts)}"
             )
@@ -445,7 +477,6 @@ class FilesystemDocumentStore(DocumentStore):
             render_frontmatter(frontmatter, content), encoding="utf-8"
         )
         self._index_cache = None
-        publisher.publish(repo, [path], f"docs: add {name}")
 
         return self._to_stored(repo, path)
 
@@ -454,25 +485,41 @@ class FilesystemDocumentStore(DocumentStore):
         return self._to_stored(self._repo_of_path(path), path)
 
     def write(self, doc_id: str, content: str, *, append: bool = False) -> None:
-        publisher = self._require_writable()
+        """Write to the working tier, copying from canonical if needed.
+
+        Editing a published document copies it into the working tier first
+        and applies the edit there, so the canonical clone stays clean and
+        the change can be reviewed as a pull request later.
+        """
         path = self._resolve_path(doc_id)
         repo = self._repo_of_path(path)
 
         frontmatter, body = parse_frontmatter(
             path.read_text(encoding="utf-8")
         )
+        if self._tier_of(path) == CANONICAL:
+            path = self._working_twin(repo, path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            logger.info(
+                f"'{doc_id}' is canonical; editing a working copy at {path}"
+            )
+            self._index_cache = None
+
         new_body = (body + content) if append else content
         path.write_text(
             render_frontmatter(frontmatter, new_body), encoding="utf-8"
         )
-        publisher.publish(repo, [path], f"docs: update {doc_id}")
 
     def move(self, doc_id: str, *, project_id: str, folder_path: str) -> str:
-        publisher = self._require_writable()
         path = self._resolve_path(doc_id)
-        repo = self._repo_for_project(project_id)
+        if self._tier_of(path) == CANONICAL:
+            raise DocumentStoreError(
+                f"'{doc_id}' is canonical; moving it is a rename in Git and "
+                "has to go through a pull request, not this store."
+            )
 
-        target_dir = self._docs_dir(repo)
+        repo = self._repo_for_project(project_id)
+        target_dir = self._docs_dir(repo, WORKING)
         if folder_path:
             target_dir = target_dir / Path(folder_path.strip("/"))
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -487,22 +534,21 @@ class FilesystemDocumentStore(DocumentStore):
 
         path.rename(destination)
         self._index_cache = None
-        publisher.publish(
-            repo, [path, destination], f"docs: move {doc_id} to {folder_path}"
-        )
         # The id lives in frontmatter, so it survives the move.
         return doc_id
 
     def delete(self, doc_id: str, *, permanent: bool = False) -> None:
         """Archive by default (design §6.3), unlink only when asked."""
-        publisher = self._require_writable()
         path = self._resolve_path(doc_id)
-        repo = self._repo_of_path(path)
+        if self._tier_of(path) == CANONICAL:
+            raise DocumentStoreError(
+                f"'{doc_id}' is canonical; deleting it has to go through a "
+                "pull request, not this store."
+            )
 
         if permanent:
             path.unlink()
             self._index_cache = None
-            publisher.publish(repo, [path], f"docs: remove {doc_id}")
             return
 
         frontmatter, body = parse_frontmatter(
@@ -512,21 +558,124 @@ class FilesystemDocumentStore(DocumentStore):
         path.write_text(
             render_frontmatter(frontmatter, body), encoding="utf-8"
         )
-        publisher.publish(repo, [path], f"docs: archive {doc_id}")
 
     def scan(self, project_id: Optional[str] = None) -> list[StoredDoc]:
-        docs: list[StoredDoc] = []
-        for repo in self._iter_repos(project_id):
-            for path, _, _ in self._walk(repo):
-                docs.append(self._to_stored(repo, path))
-        return docs
+        """Every document in both tiers, working shadowing canonical."""
+        by_id: dict[str, StoredDoc] = {}
+        for tier in (CANONICAL, WORKING):
+            for repo in self._iter_repos(project_id):
+                for path, _, _ in self._walk(repo, tier):
+                    doc = self._to_stored(repo, path)
+                    by_id[doc.doc_id] = doc
+        return list(by_id.values())
 
     def ensure_folder(self, *, project_id: str, folder_path: str) -> bool:
         repo = self._repo_for_project(project_id)
-        target = self._docs_dir(repo)
+        target = self._docs_dir(repo, WORKING)
         if folder_path:
             target = target / Path(folder_path.strip("/"))
         if target.exists():
             return False
         target.mkdir(parents=True, exist_ok=True)
         return True
+
+    # ------------------------------------------------------------------
+    # Reconciliation (design §6.4.1)
+    # ------------------------------------------------------------------
+
+    def reconcile(
+        self,
+        project_id: Optional[str] = None,
+        *,
+        remove_promoted: bool = True,
+    ) -> list[ReconcileEntry]:
+        """Compare the working tier against canonical after a sync.
+
+        Run by the sync job once the clones have been pulled, not when a
+        pull request merges: between a merge and the next five-minute pull
+        the canonical copy does not exist yet, so removing the working copy
+        at merge time would leave the document invisible.
+
+        A working copy whose body differs from canonical is kept and
+        reported, never removed -- that is someone's edit made after the
+        pull request went out.
+
+        Args:
+            project_id: Restrict to one project; ``None`` means all.
+            remove_promoted: Delete working copies that match canonical.
+                ``False`` reports without touching anything.
+        """
+        canonical: dict[str, Path] = {}
+        for repo in self._iter_repos(project_id):
+            for path, frontmatter, _ in self._walk(repo, CANONICAL):
+                canonical.setdefault(
+                    self._doc_id_for(repo, path, frontmatter), path
+                )
+
+        now = time.time()
+        entries: list[ReconcileEntry] = []
+        removed = False
+
+        for repo in self._iter_repos(project_id):
+            for path, frontmatter, body in self._walk(repo, WORKING):
+                doc_id = self._doc_id_for(repo, path, frontmatter)
+                try:
+                    age_days = (now - path.stat().st_mtime) / 86400.0
+                except OSError:
+                    age_days = 0.0
+
+                twin = canonical.get(doc_id)
+                if twin is None:
+                    entries.append(ReconcileEntry(
+                        doc_id=doc_id,
+                        state="draft",
+                        working_path=path.as_posix(),
+                        age_days=age_days,
+                        stale=age_days >= self.stale_after_days,
+                    ))
+                    continue
+
+                _, twin_body = parse_frontmatter(
+                    twin.read_text(encoding="utf-8")
+                )
+                if twin_body == body:
+                    if remove_promoted:
+                        path.unlink()
+                        removed = True
+                        logger.info(
+                            f"'{doc_id}' promoted; removed working copy {path}"
+                        )
+                    entries.append(ReconcileEntry(
+                        doc_id=doc_id,
+                        state="promoted",
+                        working_path=path.as_posix(),
+                        canonical_path=twin.as_posix(),
+                        age_days=age_days,
+                    ))
+                else:
+                    logger.warning(
+                        f"'{doc_id}' differs between the working copy "
+                        f"({path}) and canonical ({twin}). Keeping the "
+                        "working copy; it holds an edit made after the pull "
+                        "request."
+                    )
+                    entries.append(ReconcileEntry(
+                        doc_id=doc_id,
+                        state="diverged",
+                        working_path=path.as_posix(),
+                        canonical_path=twin.as_posix(),
+                        age_days=age_days,
+                        stale=age_days >= self.stale_after_days,
+                    ))
+
+        if removed:
+            self._index_cache = None
+
+        for entry in entries:
+            if entry.stale and entry.state == "draft":
+                logger.warning(
+                    f"'{entry.doc_id}' has been in the working tier for "
+                    f"{entry.age_days:.0f} days without reaching canonical."
+                )
+
+        return entries

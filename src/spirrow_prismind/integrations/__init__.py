@@ -9,9 +9,8 @@ from .document_store import (
     slugify,
 )
 from .filesystem_document_store import (
-    DocumentPublisher,
     FilesystemDocumentStore,
-    NullPublisher,
+    ReconcileEntry,
     parse_frontmatter,
     render_frontmatter,
 )
@@ -52,12 +51,11 @@ from .retry import (
 __all__ = [
     # Document store
     "DocumentNotFound",
-    "DocumentPublisher",
     "DocumentStore",
     "DocumentStoreError",
     "FilesystemDocumentStore",
     "GoogleDocumentStore",
-    "NullPublisher",
+    "ReconcileEntry",
     "StoredDoc",
     "UnsupportedDocumentFormat",
     "parse_frontmatter",
