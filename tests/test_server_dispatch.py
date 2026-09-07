@@ -59,6 +59,21 @@ def _tool_schema(tool_name: str) -> dict:
     raise AssertionError(f"Tool {tool_name!r} not declared in TOOLS")
 
 
+
+def _make_server_with_mock_catalog() -> tuple[PrismindServer, MagicMock]:
+    """Return a PrismindServer wired to a mocked CatalogTools."""
+    server = PrismindServer()
+    server._initialized = True
+    server._project_tools = MagicMock()
+
+    catalog = MagicMock()
+    server._catalog_tools = catalog
+    catalog.search_catalog.return_value = MagicMock(
+        success=True, total_count=0, documents=[], message="ok"
+    )
+    return server, catalog
+
+
 class TestAddTaskDispatch:
     """Verify add_task dispatch forwards all extended fields."""
 
@@ -479,3 +494,78 @@ class TestGetIdentityDispatch:
         assert result["success"] is True
         assert result["found"] is False
         assert result["identity"] is None
+
+
+class TestSearchCatalogDispatch:
+    """`project` must reach CatalogTools.
+
+    CatalogTools.search_catalog has always accepted `project` and uses it
+    purely as a RAG filter — it never validates that the project is
+    registered. The dispatch dropped it and the schema never declared it, so
+    the only way to search another project was `switch_project`: a mutation
+    of session state performed to accomplish a read.
+
+    Same failure this module was written for (see the module docstring):
+    a documented field silently not forwarded.
+    """
+
+    def test_dispatch_forwards_project(self):
+        server, catalog = _make_server_with_mock_catalog()
+
+        asyncio.run(
+            server._dispatch_tool(
+                "search_catalog",
+                {"query": "design", "project": "spirrow-docs", "limit": 5},
+            )
+        )
+
+        kwargs = catalog.search_catalog.call_args.kwargs
+        assert kwargs["project"] == "spirrow-docs"
+        assert kwargs["query"] == "design"
+        assert kwargs["limit"] == 5
+
+    def test_omitted_project_is_none_so_current_project_applies(self):
+        """The default must not change: None lets CatalogTools fall back."""
+        server, catalog = _make_server_with_mock_catalog()
+
+        asyncio.run(server._dispatch_tool("search_catalog", {"query": "x"}))
+
+        assert catalog.search_catalog.call_args.kwargs["project"] is None
+
+    def test_schema_declares_project(self):
+        schema = _tool_schema("search_catalog")
+        assert "project" in schema["properties"]
+
+
+class TestProgressUserForwarding:
+    """get_task / delete_task advertise `user` and must forward it.
+
+    add_task, update_task and update_task_status already do. These two did
+    not, so a caller-supplied user was accepted and dropped.
+
+    list_context_authors is deliberately excluded: it carries a comment
+    explaining that session state is keyed under Prismind's default user, so
+    threading a Magickit-supplied user there would never match.
+    """
+
+    def test_get_task_forwards_user(self):
+        server, progress = _make_server_with_mock_progress()
+
+        asyncio.run(
+            server._dispatch_tool(
+                "get_task", {"task_id": "T01", "project": "p1", "user": "u1"}
+            )
+        )
+
+        assert progress.get_task.call_args.kwargs["user"] == "u1"
+
+    def test_delete_task_forwards_user(self):
+        server, progress = _make_server_with_mock_progress()
+
+        asyncio.run(
+            server._dispatch_tool(
+                "delete_task", {"task_id": "T01", "project": "p1", "user": "u1"}
+            )
+        )
+
+        assert progress.delete_task.call_args.kwargs["user"] == "u1"

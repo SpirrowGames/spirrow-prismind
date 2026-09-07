@@ -834,13 +834,17 @@ TOOLS = [
     # Catalog Operations
     Tool(
         name="search_catalog",
-        description="Search the document catalog.",
+        description="Search the document catalog. Uses current project if project is not specified.",
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
                     "description": "Search query",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project ID (uses current project if omitted)",
                 },
                 "doc_type": {
                     "type": "string",
@@ -2258,6 +2262,7 @@ class PrismindServer:
         elif name == "search_catalog":
             result = self._catalog_tools.search_catalog(
                 query=args.get("query"),
+                project=args.get("project"),
                 doc_type=args.get("doc_type"),
                 phase_task=args.get("phase_task"),
                 feature=args.get("feature"),
@@ -2506,6 +2511,7 @@ class PrismindServer:
                 task_id=args["task_id"],
                 phase=args.get("phase"),
                 project=args.get("project"),
+                user=args.get("user"),
             )
             task_dict = None
             if result.task:
@@ -2535,6 +2541,7 @@ class PrismindServer:
                 task_id=args["task_id"],
                 phase=args.get("phase"),
                 project=args.get("project"),
+                user=args.get("user"),
             )
             return {
                 "success": result.success,

@@ -1,5 +1,7 @@
 """Tests for FilesystemDocumentStore, against a real temporary filesystem."""
 
+import os
+
 import pytest
 
 from spirrow_prismind.integrations.document_store import (
@@ -294,3 +296,173 @@ class TestRepoResolution:
 
         assert "spirrow-docs" in store.repos
         assert len(store.scan("spirrow-docs")) == 2
+
+
+def _case_sensitive(path) -> bool:
+    """Whether `path`'s filesystem distinguishes `A` from `a`."""
+    probe = path / "CaseProbe"
+    probe.mkdir()
+    try:
+        return not (path / "caseprobe").exists()
+    finally:
+        probe.rmdir()
+
+
+class TestDocsDirsOverride:
+    """`[docs_dirs]` — a repository can keep documents in more than one place.
+
+    Spirrow-VoxelWorld is why this exists: its specs live in `Docs/` while
+    `docs/` holds only branching.md (which carries the ephemeral-develop
+    sentinel). Both are live, and /srv/docs is case-sensitive, so a single
+    lowercase guess finds one file out of fourteen.
+
+    The mechanism under test is "several directories", not letter case, so
+    these use distinct names. The real `Docs/` + `docs/` pairing is pinned
+    separately below, where the filesystem allows it.
+    """
+
+    @pytest.fixture
+    def multi_root(self, tmp_path):
+        repo = tmp_path / "Spirrow-VoxelWorld"
+        (repo / "Specs" / "percell-lod").mkdir(parents=True)
+        (repo / "docs").mkdir(parents=True)
+        (repo / "Specs" / "LOD_IMPLEMENTATION_SPEC.md").write_text(
+            "---\nid: voxelworld:lod-implementation-spec\ntitle: LOD 実装仕様\n---\n\n本文\n",
+            encoding="utf-8",
+        )
+        (repo / "Specs" / "percell-lod" / "spec.md").write_text(
+            "# per-cell LOD\n", encoding="utf-8"
+        )
+        (repo / "docs" / "branching.md").write_text(
+            "# branching\n\nEPHEMERAL-DEVELOP-PROCEDURE-V1\n", encoding="utf-8"
+        )
+        (tmp_path / "repos.toml").write_text(
+            '[repos]\n'
+            'spirrow-voxelworld = "Spirrow-VoxelWorld"\n'
+            '\n'
+            '[docs_dirs]\n'
+            'spirrow-voxelworld = ["Specs", "docs"]\n',
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_scan_finds_every_configured_directory(self, multi_root):
+        store = FilesystemDocumentStore(root=str(multi_root))
+
+        ids = {d.doc_id for d in store.scan("spirrow-voxelworld")}
+
+        assert ids == {
+            "voxelworld:lod-implementation-spec",       # frontmatter id
+            "spirrow-voxelworld:branching",             # provisional, from docs/
+            "spirrow-voxelworld:percell-lod/spec",      # nested under Specs/
+        }
+
+    def test_without_the_override_only_docs_is_seen(self, multi_root):
+        """The pre-fix behaviour, pinned: one file out of three."""
+        (multi_root / "repos.toml").write_text(
+            '[repos]\nspirrow-voxelworld = "Spirrow-VoxelWorld"\n',
+            encoding="utf-8",
+        )
+        store = FilesystemDocumentStore(root=str(multi_root))
+
+        assert [d.doc_id for d in store.scan("spirrow-voxelworld")] == [
+            "spirrow-voxelworld:branching"
+        ]
+
+    def test_reads_by_id_across_directories(self, multi_root):
+        store = FilesystemDocumentStore(root=str(multi_root))
+
+        assert store.read("voxelworld:lod-implementation-spec").title == "LOD 実装仕様"
+        assert "EPHEMERAL" in store.read("spirrow-voxelworld:branching").body
+
+    def test_first_entry_is_where_writes_go(self, multi_root):
+        store = FilesystemDocumentStore(
+            root=str(multi_root), publisher=NullPublisher()
+        )
+
+        store.create(
+            project_id="spirrow-voxelworld",
+            folder_path="",
+            name="New Spec",
+            content="body",
+        )
+
+        assert (multi_root / "Spirrow-VoxelWorld/Specs/New-Spec.md").exists()
+        assert not (multi_root / "Spirrow-VoxelWorld/docs/New-Spec.md").exists()
+
+    def test_a_bare_string_is_accepted(self, multi_root):
+        (multi_root / "repos.toml").write_text(
+            '[repos]\nspirrow-voxelworld = "Spirrow-VoxelWorld"\n'
+            '\n[docs_dirs]\nspirrow-voxelworld = "Specs"\n',
+            encoding="utf-8",
+        )
+        store = FilesystemDocumentStore(root=str(multi_root))
+
+        assert store.docs_dirs("spirrow-voxelworld") == ["Specs"]
+        assert len(store.scan("spirrow-voxelworld")) == 2
+
+    def test_default_is_lowercase_docs(self, root):
+        assert FilesystemDocumentStore(root=str(root)).docs_dirs("spirrow-docs") == [
+            "docs"
+        ]
+
+    def test_docs_and_Docs_side_by_side(self, tmp_path):
+        """The actual VoxelWorld shape, where the filesystem allows it.
+
+        Skipped on Windows/macOS default volumes, which fold case and cannot
+        hold both directories. /srv/docs is ext4, where this is the real
+        layout.
+        """
+        if not _case_sensitive(tmp_path):
+            pytest.skip("filesystem folds case; cannot create Docs/ and docs/")
+
+        repo = tmp_path / "Spirrow-VoxelWorld"
+        (repo / "Docs").mkdir(parents=True)
+        (repo / "docs").mkdir(parents=True)
+        (repo / "Docs" / "spec.md").write_text(
+            "---\nid: voxelworld:spec\n---\n\nspec\n", encoding="utf-8"
+        )
+        (repo / "docs" / "branching.md").write_text("# branching\n", encoding="utf-8")
+        (tmp_path / "repos.toml").write_text(
+            '[repos]\nspirrow-voxelworld = "Spirrow-VoxelWorld"\n'
+            '\n[docs_dirs]\nspirrow-voxelworld = ["Docs", "docs"]\n',
+            encoding="utf-8",
+        )
+
+        store = FilesystemDocumentStore(root=str(tmp_path))
+
+        assert {d.doc_id for d in store.scan("spirrow-voxelworld")} == {
+            "voxelworld:spec",
+            "spirrow-voxelworld:branching",
+        }
+
+
+class TestReposConfigReload:
+    """A repository added to repos.toml is picked up without a restart."""
+
+    def test_new_repo_appears_without_restart(self, root):
+        store = FilesystemDocumentStore(root=str(root))
+        assert "extra-repo" not in store.repos
+
+        extra = root / "extra-repo" / "docs"
+        extra.mkdir(parents=True)
+        (extra / "note.md").write_text(
+            "---\nid: extra:note\ntitle: Note\n---\n\nbody\n", encoding="utf-8"
+        )
+        config = root / "repos.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8") + 'extra-repo = "extra-repo"\n',
+            encoding="utf-8",
+        )
+        # mtime resolution is coarse on some filesystems; make the edit visible
+        stat = config.stat()
+        os.utime(config, (stat.st_atime, stat.st_mtime + 10))
+
+        assert "extra-repo" in store.repos
+        assert [d.doc_id for d in store.scan("extra-repo")] == ["extra:note"]
+
+    def test_unchanged_config_is_not_reloaded(self, root):
+        store = FilesystemDocumentStore(root=str(root))
+        first = store.repos
+
+        assert store.repos is first

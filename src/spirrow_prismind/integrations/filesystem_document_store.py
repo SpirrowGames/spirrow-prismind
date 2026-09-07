@@ -15,9 +15,19 @@ Repository map (``/srv/docs/repos.toml``)::
     spirrow-docs       = "spirrow-docs"
     spirrow-voxelworld = "Spirrow-VoxelWorld"
 
-The key is the repository identifier a project points at (its
+    [docs_dirs]
+    spirrow-voxelworld = ["Docs", "docs"]
+
+The ``[repos]`` key is the repository identifier a project points at (its
 ``root_folder_id``, reused as a repo id in filesystem mode -- design §6.2);
 the value is the clone's directory name under ``<root>``.
+
+``[docs_dirs]`` is optional and names the directories inside a clone that
+hold documents. It defaults to ``["docs"]``. Spirrow-VoxelWorld needs it:
+that repository keeps its specs in ``Docs/`` and only ``branching.md`` in
+``docs/``, both are live, and ``/srv/docs`` sits on a case-sensitive
+filesystem -- so a single lowercase guess finds one file out of fourteen.
+The first entry is where new documents are written.
 """
 
 import logging
@@ -159,6 +169,10 @@ class FilesystemDocumentStore(DocumentStore):
         self.publisher = publisher
         self.user_name = user_name
         self._repos: Optional[dict[str, str]] = None
+        self._docs_dirs: dict[str, list[str]] = {}
+        # mtime of repos.toml when it was last read, so a repository added
+        # to the file is picked up without restarting the server.
+        self._repos_mtime: Optional[float] = None
         # doc_id -> path, rebuilt by _index() on demand.
         self._index_cache: Optional[dict[str, Path]] = None
 
@@ -168,10 +182,30 @@ class FilesystemDocumentStore(DocumentStore):
 
     @property
     def repos(self) -> dict[str, str]:
-        """Repository id -> directory name, from ``repos.toml``."""
-        if self._repos is None:
+        """Repository id -> directory name, from ``repos.toml``.
+
+        Re-read when the file's mtime moves. Without this, adding a
+        repository to ``repos.toml`` needs a Prismind restart before the
+        sync timer can see it -- which is not obvious from the outside and
+        cost a confused half hour during the first deployment.
+        """
+        mtime = self._repos_config_mtime()
+        if self._repos is None or mtime != self._repos_mtime:
             self._repos = self._load_repos()
+            self._repos_mtime = mtime
+            self._index_cache = None
         return self._repos
+
+    def _repos_config_mtime(self) -> Optional[float]:
+        try:
+            return self.repos_config.stat().st_mtime
+        except OSError:
+            return None
+
+    def docs_dirs(self, repo: str) -> list[str]:
+        """Document directory names inside ``repo``'s clone."""
+        self.repos  # ensure repos.toml has been read
+        return self._docs_dirs.get(repo) or ["docs"]
 
     def _load_repos(self) -> dict[str, str]:
         if not self.repos_config.exists():
@@ -187,6 +221,15 @@ class FilesystemDocumentStore(DocumentStore):
 
         with open(self.repos_config, "rb") as f:
             data = tomllib.load(f)
+
+        docs_dirs: dict[str, list[str]] = {}
+        for key, value in (data.get("docs_dirs") or {}).items():
+            if isinstance(value, str):
+                value = [value]
+            names = [str(v).strip("/") for v in value if str(v).strip("/")]
+            if names:
+                docs_dirs[str(key)] = names
+        self._docs_dirs = docs_dirs
 
         repos = data.get("repos", {})
         return {str(k): str(v) for k, v in repos.items()}
@@ -221,7 +264,27 @@ class FilesystemDocumentStore(DocumentStore):
         return self.root / directory
 
     def _docs_dir(self, repo: str) -> Path:
-        return self._repo_dir(repo) / "docs"
+        """Where new documents are written: the first configured directory."""
+        return self._repo_dir(repo) / self.docs_dirs(repo)[0]
+
+    def _docs_dir_paths(self, repo: str) -> list[Path]:
+        """Every configured document directory, in order."""
+        repo_dir = self._repo_dir(repo)
+        return [repo_dir / name for name in self.docs_dirs(repo)]
+
+    def _docs_dir_of(self, repo: str, path: Path) -> Path:
+        """Which configured directory a path lives under.
+
+        Falls back to the primary one so a caller always gets a usable base
+        for relative-path work.
+        """
+        for candidate in self._docs_dir_paths(repo):
+            try:
+                path.relative_to(candidate)
+            except ValueError:
+                continue
+            return candidate
+        return self._docs_dir(repo)
 
     def _require_writable(self) -> DocumentPublisher:
         if self.publisher is None:
@@ -250,7 +313,7 @@ class FilesystemDocumentStore(DocumentStore):
 
         product = str(frontmatter.get("product") or repo)
         try:
-            relative = path.relative_to(self._docs_dir(repo))
+            relative = path.relative_to(self._docs_dir_of(repo, path))
         except ValueError:
             relative = Path(path.name)
         slug = "/".join(relative.with_suffix("").parts)
@@ -288,19 +351,21 @@ class FilesystemDocumentStore(DocumentStore):
 
     def _walk(self, repo: str):
         """Yield ``(path, frontmatter, body)`` for each Markdown file."""
-        docs_dir = self._docs_dir(repo)
-        if not docs_dir.exists():
-            return
-        for path in sorted(docs_dir.rglob("*.md")):
-            if not path.is_file():
+        seen: set[Path] = set()
+        for docs_dir in self._docs_dir_paths(repo):
+            if not docs_dir.exists():
                 continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except OSError as e:
-                logger.warning(f"Could not read '{path}': {e}")
-                continue
-            frontmatter, body = parse_frontmatter(text)
-            yield path, frontmatter, body
+            for path in sorted(docs_dir.rglob("*.md")):
+                if not path.is_file() or path in seen:
+                    continue
+                seen.add(path)
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except OSError as e:
+                    logger.warning(f"Could not read '{path}': {e}")
+                    continue
+                frontmatter, body = parse_frontmatter(text)
+                yield path, frontmatter, body
 
     def _resolve_path(self, doc_id: str) -> Path:
         index = self._index()
@@ -371,7 +436,7 @@ class FilesystemDocumentStore(DocumentStore):
         frontmatter.setdefault("title", name)
         if "id" not in frontmatter:
             product = str(frontmatter.get("product") or repo)
-            relative = path.relative_to(self._docs_dir(repo))
+            relative = path.relative_to(self._docs_dir_of(repo, path))
             frontmatter["id"] = (
                 f"{product}:{'/'.join(relative.with_suffix('').parts)}"
             )
