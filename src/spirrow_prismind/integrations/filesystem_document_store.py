@@ -70,6 +70,7 @@ from .document_store import (
     StoredDoc,
     slugify,
 )
+from .infra_registry import Finding, Registry, load_registry, registry_path_for
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..tools.project_tools import ProjectTools
@@ -81,6 +82,10 @@ MARKDOWN_MIME = "text/markdown"
 
 WORKING = "working"
 CANONICAL = "canonical"
+
+# The registry's own repository. It is the one place real infra values belong,
+# so it is neither substituted on write nor reported by the §3.1 check.
+DOCS_REPO = "spirrow-docs"
 
 
 @dataclass
@@ -152,6 +157,7 @@ class FilesystemDocumentStore(DocumentStore):
         user_name: str = "default",
         work_root: str = "/srv/docs-work",
         stale_after_days: float = 14.0,
+        infra_registry: Optional[str] = None,
     ):
         """Initialize the filesystem store.
 
@@ -166,6 +172,8 @@ class FilesystemDocumentStore(DocumentStore):
             work_root: Directory holding the working tier, outside Git.
             stale_after_days: How long a draft may sit in the working tier
                 before :meth:`reconcile` flags it.
+            infra_registry: Path to the infra placeholder registry. Defaults to
+                ``<root>/spirrow-docs/docs/platform/infra-registry.md``.
         """
         self.root = Path(root)
         self.work_root = Path(work_root)
@@ -182,6 +190,11 @@ class FilesystemDocumentStore(DocumentStore):
         self._repos_mtime: Optional[float] = None
         # doc_id -> path, rebuilt by _index() on demand.
         self._index_cache: Optional[dict[str, Path]] = None
+        # Infra placeholders (conventions §3.1). Re-read when the file moves,
+        # like repos.toml: the sync timer can update it under a running server.
+        self.infra_registry_path = registry_path_for(self.root, infra_registry)
+        self._registry: Optional[Registry] = None
+        self._registry_mtime: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Repository / path resolution
@@ -202,6 +215,18 @@ class FilesystemDocumentStore(DocumentStore):
             self._repos_mtime = mtime
             self._index_cache = None
         return self._repos
+
+    @property
+    def registry(self) -> Registry:
+        """The infra placeholder table, re-read when the file changes."""
+        try:
+            mtime: Optional[float] = self.infra_registry_path.stat().st_mtime
+        except OSError:
+            mtime = None
+        if self._registry is None or mtime != self._registry_mtime:
+            self._registry = load_registry(self.infra_registry_path)
+            self._registry_mtime = mtime
+        return self._registry
 
     def _repos_config_mtime(self) -> Optional[float]:
         try:
@@ -435,8 +460,18 @@ class FilesystemDocumentStore(DocumentStore):
                 return repo
         raise DocumentStoreError(f"Path '{path}' is not inside any known repo")
 
-    def _to_stored(self, repo: str, path: Path) -> StoredDoc:
+    def _to_stored(self, repo: str, path: Path, *, resolve: bool = False) -> StoredDoc:
+        """Read one file into a StoredDoc.
+
+        ``resolve`` fills infra placeholders in with their real values. It is
+        off for scanning and indexing on purpose: the catalog and the §3.1
+        check both have to see what is actually committed, and a resolved scan
+        would put real host names into the vector index and make every correct
+        placeholder look like a violation.
+        """
         text = path.read_text(encoding="utf-8")
+        if resolve:
+            text = self.registry.resolve(text)
         frontmatter, body = parse_frontmatter(text)
         doc_id = self._doc_id_for(repo, path, frontmatter)
         title = str(frontmatter.get("title") or path.stem)
@@ -454,6 +489,48 @@ class FilesystemDocumentStore(DocumentStore):
             path=relative,
             frontmatter=frontmatter,
         )
+
+    def _for_disk(self, repo: str, body: str) -> str:
+        """Take real infra values back out before a document is written.
+
+        Conventions §3.1: the values live in one registry and every other
+        repository carries placeholders. Doing it here means a caller can write
+        the host name it just read and still not put it in a file.
+
+        ``spirrow-docs`` is the registry's own home and keeps real values.
+        """
+        if repo == DOCS_REPO:
+            return body
+        return self.registry.substitute(body)
+
+    def check_placeholders(
+        self, project_id: Optional[str] = None
+    ) -> list[Finding]:
+        """Real infra values sitting where a placeholder belongs (§3.1).
+
+        This is the continuous half of the guard: it sees every clone the sync
+        timer maintains, including documents committed straight to git without
+        passing through this store. It reports after the fact -- the pre-commit
+        hook in spirrow-docs is what stops a value before it is pushed.
+        """
+        registry = self.registry
+        if registry.empty:
+            raise DocumentStoreError(
+                f"infra registry unusable at {self.infra_registry_path}; "
+                "refusing to report a clean check"
+            )
+        findings: list[Finding] = []
+        for repo in self._iter_repos(project_id):
+            if repo == DOCS_REPO:
+                continue
+            for tier in (CANONICAL, WORKING):
+                for path, _, _ in self._walk(repo, tier):
+                    try:
+                        text = path.read_text(encoding="utf-8")
+                    except OSError:
+                        continue
+                    findings.extend(registry.findings(text, str(path)))
+        return findings
 
     # ------------------------------------------------------------------
     # DocumentStore
@@ -489,15 +566,16 @@ class FilesystemDocumentStore(DocumentStore):
             )
 
         path.write_text(
-            render_frontmatter(frontmatter, content), encoding="utf-8"
+            render_frontmatter(frontmatter, self._for_disk(repo, content)),
+            encoding="utf-8",
         )
         self._index_cache = None
 
-        return self._to_stored(repo, path)
+        return self._to_stored(repo, path, resolve=True)
 
     def read(self, doc_id: str) -> StoredDoc:
         path = self._resolve_path(doc_id)
-        return self._to_stored(self._repo_of_path(path), path)
+        return self._to_stored(self._repo_of_path(path), path, resolve=True)
 
     def write(self, doc_id: str, content: str, *, append: bool = False) -> None:
         """Write to the working tier, copying from canonical if needed.
@@ -522,7 +600,8 @@ class FilesystemDocumentStore(DocumentStore):
 
         new_body = (body + content) if append else content
         path.write_text(
-            render_frontmatter(frontmatter, new_body), encoding="utf-8"
+            render_frontmatter(frontmatter, self._for_disk(repo, new_body)),
+            encoding="utf-8",
         )
 
     def move(self, doc_id: str, *, project_id: str, folder_path: str) -> str:

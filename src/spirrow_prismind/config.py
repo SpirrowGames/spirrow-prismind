@@ -44,6 +44,9 @@ class DocumentsConfig:
     repos_config: str = ""  # Empty = <root>/repos.toml
     work_root: str = "/srv/docs-work"  # Working tier (design 6.3.1)
     stale_after_days: float = 14.0
+    # Infra placeholder registry (conventions §3.1). Empty =
+    # <root>/spirrow-docs/docs/platform/infra-registry.md
+    infra_registry: str = ""
 
 
 @dataclass
@@ -142,6 +145,9 @@ class Config:
                 ),
                 stale_after_days=float(
                     data.get("documents", {}).get("stale_after_days", 14.0)
+                ),
+                infra_registry=data.get("documents", {}).get(
+                    "infra_registry", ""
                 ),
             ),
             log=LogConfig(

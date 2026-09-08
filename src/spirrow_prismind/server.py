@@ -1475,6 +1475,7 @@ class PrismindServer:
                     user_name=self.config.user_name,
                     work_root=self.config.documents.work_root,
                     stale_after_days=self.config.documents.stale_after_days,
+                    infra_registry=self.config.documents.infra_registry or None,
                 )
                 logger.info(
                     "Document backend: filesystem "
