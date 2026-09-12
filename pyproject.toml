@@ -33,6 +33,12 @@ dependencies = [
     # Frontmatter on filesystem-backed documents (FilesystemDocumentStore).
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
+    # Declared explicitly because `--transport sse` imports them directly
+    # (spirrow_prismind.transport). They already arrive transitively via
+    # mcp, but an undeclared import breaks the moment mcp drops them, and
+    # CI resolves dependencies fresh on every run rather than from uv.lock.
+    "starlette>=0.40.0",
+    "uvicorn>=0.30.0",
     "tomli>=2.0.0",
     "tomli-w>=1.0.0",
 ]
