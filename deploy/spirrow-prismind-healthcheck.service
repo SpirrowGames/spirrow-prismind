@@ -1,0 +1,22 @@
+# Oneshot MCP-level probe, driven by spirrow-prismind-healthcheck.timer.
+#
+# Runs as root because it may `systemctl restart` the server unit. That
+# crosses no privilege boundary on this host (sgadmin has sudo), but it
+# does mean root executes a file writable by sgadmin -- keep that in mind
+# if the trust model of the box ever changes.
+
+[Unit]
+Description=Spirrow Prismind MCP healthcheck
+After=spirrow-prismind.service
+Documentation=file:/home/sgadmin/services/spirrow/spirrow-prismind/deploy/README.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/sgadmin/services/spirrow/spirrow-prismind
+ExecStart=/home/sgadmin/services/spirrow/spirrow-prismind/venv/bin/python \
+    /home/sgadmin/services/spirrow/spirrow-prismind/scripts/healthcheck.py \
+    --url http://127.0.0.1:8112/sse \
+    --restart-unit spirrow-prismind.service
+# A failed probe exits non-zero on purpose, so an unhealthy server is also
+# visible in `systemctl --failed` -- including the runs where the restart
+# throttle suppressed the restart.

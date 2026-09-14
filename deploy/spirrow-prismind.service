@@ -1,0 +1,47 @@
+# Canonical copy of the production unit for sg-ai-server-01.
+#
+# The deployed copy lives at /etc/systemd/system/spirrow-prismind.service.
+# This file is the source of truth for its *content*, not proof of what is
+# running: always confirm the live unit with `systemctl cat
+# spirrow-prismind.service` before trusting the paths below.
+#
+# Deploying a change here is: sudo cp deploy/spirrow-prismind.service
+# /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl
+# restart spirrow-prismind.service   (see deploy/README.md)
+
+[Unit]
+Description=Spirrow Prismind - Knowledge Management MCP
+After=network.target
+
+[Service]
+# Type=notify: the server sends READY=1 once the SSE socket is accepting,
+# so a start that never becomes serveable fails the unit instead of being
+# reported as up.
+Type=notify
+NotifyAccess=main
+User=sgadmin
+WorkingDirectory=/home/sgadmin/services/spirrow/spirrow-prismind
+Environment=PYTHONUNBUFFERED=1
+Environment=PRISMIND_CONFIG=/home/sgadmin/services/spirrow/spirrow-prismind/config.toml
+
+# Serves SSE from the Python process itself. The previous ExecStart went
+# through `npx -y mcp-proxy -- python -m spirrow_prismind.server`, which
+# (a) made startup depend on the npm registry and (b) kept the unit
+# "active" when the stdio child died, because the corpse was a grandchild
+# of the proxy -- see src/spirrow_prismind/transport.py for the incident.
+#
+# --host 127.0.0.1 is deliberate: the MCP endpoint is unauthenticated and
+# every consumer (magickit) is local. The proxy bound 0.0.0.0 on a host
+# with no firewall.
+ExecStart=/home/sgadmin/services/spirrow/spirrow-prismind/venv/bin/python \
+    -m spirrow_prismind.server --transport sse --host 127.0.0.1 --port 8112
+
+Restart=always
+RestartSec=10
+
+# The server pings from its serving event loop, so a loop that wedges (as
+# opposed to a process that exits) also gets restarted.
+WatchdogSec=60
+
+[Install]
+WantedBy=multi-user.target

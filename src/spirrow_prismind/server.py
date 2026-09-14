@@ -37,6 +37,7 @@ from .tools import (
     SessionTools,
     SetupTools,
 )
+from .transport import parse_args, serve_sse
 
 logger = logging.getLogger(__name__)
 
@@ -2614,7 +2615,7 @@ class PrismindServer:
             return {"success": False, "error": f"Unknown tool: {name}"}
 
     async def run(self):
-        """Run the server."""
+        """Run the server over stdio."""
         async with stdio_server() as (read_stream, write_stream):
             await self.server.run(
                 read_stream,
@@ -2622,16 +2623,31 @@ class PrismindServer:
                 self.server.create_initialization_options(),
             )
 
+    async def run_sse(self, host: str, port: int):
+        """Run the server over HTTP/SSE, owning the listening socket itself.
 
-def main():
+        This replaces the previous deployment shape (stdio behind
+        ``npx mcp-proxy``), where the process that held the socket and the
+        process that answered MCP were different and only one of them was
+        supervised. See ``transport.py`` for the failure that motivated it.
+        """
+        await serve_sse(self.server, host=host, port=port, tool_count=len(TOOLS))
+
+
+def main(argv: Optional[list[str]] = None):
     """Entry point."""
+    args = parse_args(argv)
+
     # Load config first to setup logging correctly
     config_path = os.environ.get("PRISMIND_CONFIG", "config.toml")
     config = load_config(Path(config_path))
     config.setup_logging()
 
     server = PrismindServer()
-    asyncio.run(server.run())
+    if args.transport == "sse":
+        asyncio.run(server.run_sse(args.host, args.port))
+    else:
+        asyncio.run(server.run())
 
 
 if __name__ == "__main__":

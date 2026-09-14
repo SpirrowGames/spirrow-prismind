@@ -10,6 +10,7 @@
 - [config.toml のパス設定](#configtoml-のパス設定)
 - [RAG/Memory サーバーについて](#ragmemory-サーバーについて)
 - [よくあるエラーと対処法](#よくあるエラーと対処法)
+- [サーバーが「生きているのに応答しない」](#サーバーが生きているのに応答しない)
 
 ---
 
@@ -207,3 +208,60 @@ INFO - Memory server is not available (optional). Session state will use local f
 4. 環境情報（OS、Pythonバージョン）
 
 Issue: https://github.com/SpirrowGames/spirrow-prismind/issues
+
+---
+
+## サーバーが「生きているのに応答しない」
+
+### 症状
+
+- `systemctl status spirrow-prismind.service` は **active (running)**
+- `curl http://127.0.0.1:8112/sse` も **200**
+- なのに MCP の `tools/list` が `McpError: Not connected` で失敗し、
+  magickit の `service_health` が `prismind: unhealthy` を返す
+- **journal に何も出ていない**（これが一番厄介な点）
+
+### 原因（〜2026-09-13 の旧構成）
+
+旧 `ExecStart` は `npx -y mcp-proxy --port 8112 -- python -m spirrow_prismind.server` だった。
+mcp-proxy は **起動時に stdio 子プロセスを1個だけ張り、全 HTTP セッションをそれに多重化**する実装で、
+その子を監視しない。よってクライアント切断時に `anyio.BrokenResourceError` で子が落ちると:
+
+- node の proxy は生き残るのでソケットは 200 を返し続ける（＝箱だけある状態）
+- 死んだのは systemd から見て**孫**プロセスなので `Restart=always` が発火しない
+- 以降は子を spawn しないのでログも出ない
+
+2026-09-13 01:49 にこの状態へ落ち、約30分間気付かれなかった。
+
+### 現構成
+
+`--transport sse` で **Python プロセス自身が :8112 を listen** する（mcp-proxy / npx は不使用）。
+多層に守っている内容は [`deploy/README.md`](../deploy/README.md) を参照:
+
+1. プロセス死 → `Restart=always`
+2. イベントループのハング → `WatchdogSec` + サーバーからの `WATCHDOG=1` ping
+3. HTTP は応答するが MCP が壊れている → `spirrow-prismind-healthcheck.timer`
+
+### 確認コマンド
+
+```bash
+# HTTP の 200 は死活判定にならない。MCP まで叩くこと
+venv/bin/python scripts/healthcheck.py --url http://127.0.0.1:8112/sse
+
+# プロセス構成（node/npx が居ないこと・python が socket を持つこと）
+systemctl status spirrow-prismind.service | sed -n '/CGroup/,+3p'
+ss -ltnp | grep 8112
+
+# 自プロセスの状態だけを返す軽量エンドポイント（外部依存は見ない）
+curl -s http://127.0.0.1:8112/health
+```
+
+### 対処
+
+```bash
+sudo systemctl restart spirrow-prismind.service
+```
+
+healthcheck timer が有効なら、最大2分＋リトライで自動的に同じことをする。
+`--min-restart-interval`（既定600秒）以内の再発は**自動 restart されない** —
+短時間に繰り返す障害は再起動で直る種類ではない、という判断なので、その場合は journal を読む。
