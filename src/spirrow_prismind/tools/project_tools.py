@@ -723,12 +723,23 @@ class ProjectTools:
             else:
                 updated_at = datetime.now()
 
+            # Left as None when missing or unparseable: unlike updated_at,
+            # there is no sensible stand-in for a creation date.
+            created_at_str = meta.get("created_at", "")
+            created_at = None
+            if created_at_str:
+                try:
+                    created_at = datetime.fromisoformat(created_at_str)
+                except ValueError:
+                    created_at = None
+
             projects.append(ProjectSummary(
                 project_id=meta.get("project_id", ""),
                 name=meta.get("name", ""),
                 description=meta.get("description", ""),
                 updated_at=updated_at,
                 status=meta.get("status", "active"),
+                created_at=created_at,
             ))
 
         # Sort by updated_at descending

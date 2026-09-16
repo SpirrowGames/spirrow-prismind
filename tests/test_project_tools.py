@@ -240,6 +240,55 @@ class TestListProjects:
         assert result.current_project == "list_proj_2"  # Last created is current
 
 
+    def test_list_projects_carries_created_at(self, project_tools, mock_rag_client):
+        """setup_project stamps created_at; the listing has to carry it.
+
+        ProjectSummary used to drop the field, so Magickit's list_projects
+        reported created_at: "" for every project despite the stored
+        config having it all along.
+        """
+        project_tools.setup_project(
+            project="created_at_proj",
+            name="Created At Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+            force=True,
+        )
+
+        result = project_tools.list_projects()
+
+        summary = next(p for p in result.projects if p.project_id == "created_at_proj")
+        assert summary.created_at is not None
+
+    def test_list_projects_created_at_absent_stays_none(
+        self, project_tools, mock_rag_client, monkeypatch
+    ):
+        """A config written before the field existed reports None, not now().
+
+        Guessing "now" would put a creation date on a project that never
+        recorded one.
+        """
+        project_tools.setup_project(
+            project="legacy_proj",
+            name="Legacy Project",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder1",
+            create_sheets=False,
+            create_folders=False,
+            force=True,
+        )
+
+        for doc in project_tools._list_projects_with_fallback():
+            doc.metadata.pop("created_at", None)
+
+        result = project_tools.list_projects()
+
+        summary = next(p for p in result.projects if p.project_id == "legacy_proj")
+        assert summary.created_at is None
+
+
 class TestUpdateProject:
     """Tests for update_project method."""
 
