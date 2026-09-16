@@ -30,11 +30,38 @@
 リリース枠（`releases/spirrow-prismind/<slot>`）の中で:
 
 ```bash
+SLOT=/home/sgadmin/services/spirrow/releases/spirrow-prismind/<slot>   # 入れる先。絶対パスで
+
 # lock をそのまま pip の形に落とす（--no-emit-project = プロジェクト自身は含めない）
-uv export --frozen --no-dev --no-emit-project -o /tmp/prismind-req.txt
+# UV_CACHE_DIR は deploy agent の sandbox で ~/.cache が read-only なため
+UV_CACHE_DIR=/tmp/uv-cache-deploy \
+  uv export --frozen --no-dev --no-emit-project -o /tmp/prismind-req.txt
 
 # 依存だけを入れる。hash 付きで出るので検証も同時に走る
-venv/bin/pip install -r /tmp/prismind-req.txt
+"$SLOT/venv/bin/python" -m pip install -r /tmp/prismind-req.txt
+```
+
+### ★ `venv/bin/pip` を使うな — 生きている方の枠に入る
+
+リリース枠の `venv/bin/pip` は **shebang が安定パス**
+`#!/home/sgadmin/services/spirrow/spirrow-prismind/venv/bin/python3` になっている
+（両枠とも）。∴ 待機枠の中で `venv/bin/pip install` と打つと、**インタプリタは
+symlink をたどって live 枠の venv になり、依存が本番側に入る**。デプロイでやりたい
+ことの正反対で、しかも成功して終わる。
+
+`venv/bin/python` は pyenv のバイナリへの直 symlink で安定パスを経由しない ∴ 上のように
+**枠の絶対パス + `-m pip`** で呼ぶ。入れた先は `sys.prefix` で確かめられる:
+
+```bash
+"$SLOT/venv/bin/python" -c "import sys; print(sys.prefix)"   # $SLOT/venv であること
+```
+
+入った後の確認:
+
+```bash
+"$SLOT/venv/bin/python" -m pip check                          # No broken requirements
+cat "$SLOT/venv/lib/python3.11/site-packages/_spirrow_prismind.pth"
+# -> /home/sgadmin/services/spirrow/spirrow-prismind/src （安定パスのままであること）
 ```
 
 `uv.lock` が前回リリースから動いていなければ何もしなくてよい。動いていたら必ず走らせる。
