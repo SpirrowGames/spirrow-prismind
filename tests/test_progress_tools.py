@@ -72,6 +72,55 @@ class TestGetProgress:
         assert phase1.status == "in_progress"
         assert len(phase1.tasks) == 2
 
+    def test_get_progress_returns_root_folder_id(
+        self, progress_tools, mock_sheets_client, project_tools
+    ):
+        """get_progress carries the project's root_folder_id.
+
+        Magickit builds a task UTID out of it and has no other read path,
+        so dropping it here silently disables task-document linking.
+        """
+        project_tools.setup_project(
+            project="prog_uid",
+            name="Progress UID",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder-uid-1",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {
+            "values": [
+                ["フェーズ", "タスクID", "タスク名", "ステータス", "ブロッカー", "完了日", "備考"],
+                ["Phase 1", "T01", "Task 1", "completed", "", "2024-01-15", ""],
+            ]
+        }
+
+        result = progress_tools.get_progress(project="prog_uid")
+
+        assert result.success is True
+        assert result.root_folder_id == "folder-uid-1"
+
+    def test_get_progress_returns_root_folder_id_on_empty_sheet(
+        self, progress_tools, mock_sheets_client, project_tools
+    ):
+        """The id is present even when the project has no progress rows yet."""
+        project_tools.setup_project(
+            project="prog_uid_empty",
+            name="Progress UID Empty",
+            spreadsheet_id="sheet1",
+            root_folder_id="folder-uid-2",
+            create_sheets=False,
+            create_folders=False,
+        )
+
+        mock_sheets_client.read_range.return_value = {"values": []}
+
+        result = progress_tools.get_progress(project="prog_uid_empty")
+
+        assert result.success is True
+        assert result.root_folder_id == "folder-uid-2"
+
     def test_get_progress_filter_by_phase(self, progress_tools, mock_sheets_client, project_tools):
         """Test get_progress filtered by phase."""
         project_tools.setup_project(

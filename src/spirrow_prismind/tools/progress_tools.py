@@ -90,6 +90,7 @@ class ProgressTools:
                 return GetProgressResult(
                     success=False,
                     project=project,
+                    root_folder_id=config.root_folder_id,
                     message=f"進捗シート '{config.sheets.progress}' が見つかりません。プロジェクト設定を確認してください。",
                 )
 
@@ -108,6 +109,7 @@ class ProgressTools:
                     project=project,
                     current_phase="",
                     phases=[],
+                    root_folder_id=config.root_folder_id,
                     message="進捗データがありません。",
                 )
 
@@ -182,6 +184,7 @@ class ProgressTools:
                 project=project,
                 current_phase=current_phase,
                 phases=phases,
+                root_folder_id=config.root_folder_id,
                 message=f"{len(phases)} フェーズ、{sum(len(p.tasks) for p in phases)} タスクを取得しました。",
             )
 
@@ -190,6 +193,7 @@ class ProgressTools:
             return GetProgressResult(
                 success=False,
                 project=project,
+                root_folder_id=config.root_folder_id,
                 message=f"進捗の取得に失敗しました: {e}",
             )
 

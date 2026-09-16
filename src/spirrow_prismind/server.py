@@ -2392,6 +2392,7 @@ class PrismindServer:
                 "success": result.success,
                 "project": result.project,
                 "current_phase": result.current_phase,
+                "root_folder_id": result.root_folder_id,
                 "phases": [
                     {
                         "phase": p.phase,
