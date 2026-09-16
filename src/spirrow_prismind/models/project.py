@@ -193,6 +193,10 @@ class ProjectSummary:
     description: str
     updated_at: datetime
     status: str = "active"  # active, archived, etc.
+    # None when the stored config predates the field. Distinct from
+    # updated_at, which falls back to "now" -- a creation date guessed as
+    # "now" would be a lie, so absence stays visible.
+    created_at: Optional[datetime] = None
 
 
 @dataclass
