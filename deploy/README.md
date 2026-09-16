@@ -20,6 +20,40 @@
 3. **HTTP は応答するが MCP が壊れている** → healthcheck timer（`initialize` →
    `tools/list` まで実際に叩く）
 
+## 依存の反映（リリース枠に入れる）
+
+**`[project].dependencies` を満たしているかは判定材料にならない。** 下限しか書いて
+いないので、何年前に入れた版でも「満たしている」と答える。実際 2026-09-16 まで、
+両リリース枠の venv は 2026-01-20 に入れたままの mcp 1.25.0 で動いていて、
+どの検査も正常と答えていた。**正本は `uv.lock`**。
+
+リリース枠（`releases/spirrow-prismind/<slot>`）の中で:
+
+```bash
+# lock をそのまま pip の形に落とす（--no-emit-project = プロジェクト自身は含めない）
+uv export --frozen --no-dev --no-emit-project -o /tmp/prismind-req.txt
+
+# 依存だけを入れる。hash 付きで出るので検証も同時に走る
+venv/bin/pip install -r /tmp/prismind-req.txt
+```
+
+`uv.lock` が前回リリースから動いていなければ何もしなくてよい。動いていたら必ず走らせる。
+
+### プロジェクト自身は入れ直さない
+
+`venv/.../site-packages/_spirrow_prismind.pth` は**安定パス**
+`/home/sgadmin/services/spirrow/spirrow-prismind/src` を指していて、これは symlink を
+倒すだけでコードが切り替わる仕組みの一部。**リリース枠の中で `pip install -e .` や
+`uv sync` を走らせるとこれがスロット固有の絶対パスに書き換わる**（PEP 660 の
+`_editable_impl_*.pth` になり、記録されるのは実行したディレクトリ）。
+
+∴ 上の手順は `--no-emit-project` でプロジェクトを除外している。既存の `.pth` に触らない
+ことが目的で、これは省略ではない。
+
+`uv sync` を使わないのも同じ理由に加えてもう一つ: **uv sync で作った venv には pip が
+入らない** ∴ `pip show` / `pip check` が使えなくなり、デプロイの検証手段とここの
+確認手順が両方壊れる。
+
 ## 反映手順
 
 ```bash
