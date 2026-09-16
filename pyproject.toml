@@ -22,17 +22,21 @@ dependencies = [
     # Lifting this bound means migrating the server to the 2.x API -- a
     # deliberate piece of work, not a resolver side effect.
     #
-    # Do not read a version out of uv.lock and call it production's.
-    # Measured 2026-09-16, three different answers were live at once:
-    # both release venvs had 1.25.0 (installed 2026-01-20), uv.lock
-    # resolved 1.26.0, and CI -- which runs `pip install -e ".[dev]"`
-    # unpinned -- was resolving the newest <2, by then 1.30.0. Nothing
-    # installs from uv.lock: not CI, and not the deploy, which skips the
-    # dependency step whenever pyproject and uv.lock are unchanged. So
-    # the lockfile records a resolution no machine has.
+    # These specifiers are a compatibility floor, not a description of
+    # what production runs. Read the version from uv.lock (what a release
+    # installs, see deploy/README.md) or from the running venv -- never
+    # from a bound here.
     #
-    # The bound is what actually protects production, which is why it is
-    # stated here rather than left to the lock.
+    # Measured 2026-09-16, before the deploy learned to install from the
+    # lock, three answers were live at once: both release venvs had mcp
+    # 1.25.0 from 2026-01-20, uv.lock resolved 1.26.0, and CI -- which
+    # installs unpinned -- was on 1.30.0. Nothing had gone wrong; nothing
+    # had ever installed the lock. Lower bounds are satisfied by whatever
+    # is already there, so an unchanged venv always looked correct.
+    #
+    # CI still resolves fresh on every run and so still floats ahead of
+    # the lock. That is deliberate: it is how a release that would break
+    # under newer dependencies is found before the lock is refreshed.
     "mcp>=1.0.0,<2",
     "google-api-python-client>=2.100.0",
     "google-auth-httplib2>=0.1.0",
