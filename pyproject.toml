@@ -19,11 +19,20 @@ dependencies = [
     # `Server.list_tools` and renamed `Tool.inputSchema` -> `input_schema`,
     # so `PrismindServer` cannot even be constructed under 2.x
     # (server.py:1366 raises AttributeError during handler registration).
-    # uv.lock already resolves 1.26.0 and that is what runs in production;
-    # the unbounded spec only ever diverged inside CI, which installs
-    # unpinned and so silently started testing a build that cannot run.
     # Lifting this bound means migrating the server to the 2.x API -- a
     # deliberate piece of work, not a resolver side effect.
+    #
+    # Do not read a version out of uv.lock and call it production's.
+    # Measured 2026-09-16, three different answers were live at once:
+    # both release venvs had 1.25.0 (installed 2026-01-20), uv.lock
+    # resolved 1.26.0, and CI -- which runs `pip install -e ".[dev]"`
+    # unpinned -- was resolving the newest <2, by then 1.30.0. Nothing
+    # installs from uv.lock: not CI, and not the deploy, which skips the
+    # dependency step whenever pyproject and uv.lock are unchanged. So
+    # the lockfile records a resolution no machine has.
+    #
+    # The bound is what actually protects production, which is why it is
+    # stated here rather than left to the lock.
     "mcp>=1.0.0,<2",
     "google-api-python-client>=2.100.0",
     "google-auth-httplib2>=0.1.0",
