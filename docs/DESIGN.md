@@ -1065,6 +1065,7 @@ class GetProgressResult:
     current_phase: str
     phases: list[PhaseProgress]
     message: str
+    root_folder_id: str = ""        # プロジェクト固有ID（Magickit が UTID 生成に使う）
 
 @dataclass
 class PhaseProgress:

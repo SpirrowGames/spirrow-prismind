@@ -39,6 +39,11 @@ class GetProgressResult:
     current_phase: str = ""
     phases: list[PhaseProgress] = field(default_factory=list)
     message: str = ""
+    # The project's stable identifier (a Drive folder ID under the google
+    # backend, a repo id under the filesystem backend). Callers such as
+    # Magickit derive a task's UTID from it, so it has to travel with the
+    # progress payload -- they have no other read path for it.
+    root_folder_id: str = ""
 
 
 @dataclass
