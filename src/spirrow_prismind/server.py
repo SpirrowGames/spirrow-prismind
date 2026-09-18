@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -1373,6 +1374,15 @@ class PrismindServer:
         self._knowledge_tools: Optional[KnowledgeTools] = None
         self._progress_tools: Optional[ProgressTools] = None
 
+        # Tool bodies are synchronous (disk, HTTP, Google APIs). Run them off
+        # the event loop so a long call such as a full sync_catalog cannot
+        # starve the sd_notify watchdog pinger (WatchdogSec=60 SIGABRTs the
+        # process). One worker keeps the old one-call-at-a-time ordering:
+        # the tool classes were never written to be called concurrently.
+        self._tool_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="prismind-tool"
+        )
+
         # Register handlers
         self._register_handlers()
 
@@ -1624,6 +1634,13 @@ class PrismindServer:
             }, ensure_ascii=False))]
 
     async def _dispatch_tool(self, name: str, args: dict) -> dict:
+        """Dispatch a tool call on the tool executor, off the event loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._tool_executor, self._dispatch_tool_sync, name, args
+        )
+
+    def _dispatch_tool_sync(self, name: str, args: dict) -> dict:
         """Dispatch tool call to appropriate handler."""
 
         # Setup tools - always available (before full initialization)
