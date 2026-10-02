@@ -58,6 +58,9 @@ def test_sd_notify_is_a_noop_without_notify_socket(monkeypatch):
 # sd_notify speaks to systemd over an AF_UNIX datagram socket; hosts whose
 # Python has no AF_UNIX (Windows) cannot exercise it, and never run under
 # systemd either. CI (ubuntu) still runs both tests.
+# Measured on win32: CPython 3.11.9, 3.12.13 and 3.13.13 all report
+# hasattr(socket, "AF_UNIX") == False, so this predicate does skip on
+# Windows (it is not a stale pre-3.9 assumption).
 _needs_af_unix = pytest.mark.skipif(
     not hasattr(socket, "AF_UNIX"), reason="sd_notify requires AF_UNIX (systemd hosts)"
 )
