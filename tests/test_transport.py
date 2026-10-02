@@ -55,6 +55,15 @@ def test_sd_notify_is_a_noop_without_notify_socket(monkeypatch):
     assert transport.sd_notify("READY=1") is False
 
 
+# sd_notify speaks to systemd over an AF_UNIX datagram socket; hosts whose
+# Python has no AF_UNIX (Windows) cannot exercise it, and never run under
+# systemd either. CI (ubuntu) still runs both tests.
+_needs_af_unix = pytest.mark.skipif(
+    not hasattr(socket, "AF_UNIX"), reason="sd_notify requires AF_UNIX (systemd hosts)"
+)
+
+
+@_needs_af_unix
 def test_sd_notify_sends_datagram(tmp_path, monkeypatch):
     path = str(tmp_path / "notify.sock")
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -68,6 +77,7 @@ def test_sd_notify_sends_datagram(tmp_path, monkeypatch):
         listener.close()
 
 
+@_needs_af_unix
 def test_sd_notify_swallows_dead_socket(tmp_path, monkeypatch):
     # A missing socket must not propagate: losing a ping is survivable,
     # crashing the server because systemd went away is not.
