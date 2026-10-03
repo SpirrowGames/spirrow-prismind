@@ -3,7 +3,7 @@
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -23,20 +23,27 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.45
 def _new_knowledge_id() -> str:
     """Return a fresh knowledge document id.
 
-    Format: ``knowledge:{YYYYmmddHHMMSSffffff}-{rand8}``.
+    Format: ``knowledge:{YYYYmmddHHMMSSffffff}-{rand8}``, with the timestamp
+    in UTC.
 
     The timestamp alone is not unique: on hosts with a coarse clock
     (Windows' ``datetime.now()`` can repeat across many calls) two adds in a
     row would get the same id, and ``add_knowledge`` sends a plain ``add``
     (not an upsert), so the second entry could be silently lost. The 32-bit
     random suffix makes ids distinct without any per-process state, so it
-    also holds across processes writing to the same RAG collection. The
-    timestamp prefix is kept so ids still sort in creation order.
+    also holds across processes writing to the same RAG collection.
 
-    Existing ``knowledge:{timestamp}`` ids are left as they are: every reader
-    uses the id as an exact-match key, so old and new forms coexist.
+    The timestamp prefix is UTC so that writers in different time zones put
+    the same instant at the same prefix. Sorting ids therefore follows
+    creation time up to the writers' clock skew; ids created within one
+    clock tick sort in arbitrary order. No code relies on id ordering.
+
+    Existing ``knowledge:{timestamp}`` ids (local-time, no suffix) are left
+    as they are: every reader uses the id as an exact-match key, so old and
+    new forms coexist.
     """
-    return f"knowledge:{datetime.now().strftime('%Y%m%d%H%M%S%f')}-{uuid.uuid4().hex[:8]}"
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')
+    return f"knowledge:{stamp}-{uuid.uuid4().hex[:8]}"
 
 
 @dataclass

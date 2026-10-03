@@ -6,7 +6,7 @@ Windows) produced the same id.
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from spirrow_prismind.integrations.rag_client import (
@@ -17,15 +17,34 @@ from spirrow_prismind.integrations.rag_client import (
 from tests.mocks.mock_rag import MockRAGClient
 
 KNOWLEDGE_ID_RE = re.compile(r"^knowledge:\d{20}-[0-9a-f]{8}$")
-FROZEN = datetime(2026, 10, 3, 12, 0, 0, 123456)
+FROZEN_UTC = datetime(2026, 10, 3, 12, 0, 0, 123456, tzinfo=timezone.utc)
+
+
+class _FrozenDatetime(datetime):
+    """A real ``datetime`` subclass whose ``now()`` never advances.
+
+    ``datetime.datetime`` is a C built-in and cannot be patched in place, so
+    the module-level ``datetime`` name in rag_client is replaced with this
+    subclass. Unlike a MagicMock it keeps every other class behaviour
+    (``fromisoformat``, arithmetic, ``isinstance`` on its own results).
+    ``now(tz)`` returns the frozen instant converted to ``tz``, so a call that
+    asks for a different zone yields a different wall-clock prefix.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            # Naive local time, deliberately far from UTC, so a regression
+            # back to datetime.now() shows up as a different prefix.
+            return (FROZEN_UTC + timedelta(hours=9)).replace(tzinfo=None)
+        return FROZEN_UTC.astimezone(tz)
 
 
 def _frozen_clock():
-    # datetime.datetime is a C built-in and cannot be patched in place, so
-    # patch the module-level reference rag_client imported instead.
-    p = patch("spirrow_prismind.integrations.rag_client.datetime")
-    mock_dt = p.start()
-    mock_dt.now.return_value = FROZEN
+    p = patch(
+        "spirrow_prismind.integrations.rag_client.datetime", _FrozenDatetime
+    )
+    p.start()
     return p
 
 
@@ -55,7 +74,7 @@ def test_add_knowledge_ids_differ_when_clock_is_frozen():
     assert [r1.doc_id, r2.doc_id] == ids
     for doc_id in ids:
         assert KNOWLEDGE_ID_RE.match(doc_id)
-        # Timestamp prefix is preserved so ids still sort by creation time.
+        # Timestamp prefix is the UTC instant, not the host's local time.
         assert doc_id.startswith("knowledge:20261003120000123456-")
 
 
