@@ -246,19 +246,20 @@ class TestRerank:
         assert all(k in IDS for k in ids_of(result))
         assert len(result.knowledge) == 8
 
-    def test_tail_past_top_n_keeps_search_order(self):
-        # N > top_n: the first top_n are re-ranked, the rest follow in
-        # search order, then keep_k cuts. Use keep_k == top_n to see the
-        # head, and a config built past validation to see head + tail.
+    def test_past_top_n_only_head_is_scored_and_kept(self):
+        # N > top_n: only the first top_n are sent and scored; keep_k <= top_n
+        # means the unscored rest never reaches the caller on this path.
         handler = Lexora(jev_response([0.1, 0.2, 0.3], top_n=3))
         reranker = make_reranker(handler, top_n=3, keep_k=3)
         outcome = reranker.rerank("q", IDS[:6], text_of=lambda k: k, id_of=lambda k: k)
         assert outcome.items == ["k2", "k1", "k0"]
         assert len(json.loads(handler.requests[0]["state"])["candidates"]) == 3
 
-        reranker.config.keep_k = 6
+    def test_past_top_n_fallback_returns_everything(self):
+        handler = Lexora(jev_response([0.1, 0.2, 0.3], provider="null", top_n=3))
+        reranker = make_reranker(handler, top_n=3, keep_k=3)
         outcome = reranker.rerank("q", IDS[:6], text_of=lambda k: k, id_of=lambda k: k)
-        assert outcome.items == ["k2", "k1", "k0", "k3", "k4", "k5"]
+        assert outcome.items == IDS[:6]
 
     def test_zero_candidates_no_http(self):
         handler = Lexora(jev_response([]))
@@ -436,6 +437,20 @@ class TestDecisionLog:
         (rec,) = self._records(caplog)
         assert rec["called"] is False
         assert rec["n_candidates"] == 0
+
+    def test_missing_answers_still_logs_decision_id(self, caplog):
+        caplog.set_level(logging.INFO, logger="spirrow_prismind.rerank.decision")
+        handler = Lexora(lambda r: httpx.Response(
+            200, json={"provider": "null", "decision_id": "dec-9", "latency_ms": 1}
+        ))
+        outcome = make_reranker(handler).rerank(
+            "q", ["a", "b"], text_of=lambda k: k, id_of=lambda k: k
+        )
+        assert outcome.items == ["a", "b"]
+        (rec,) = self._records(caplog)
+        assert rec["decision_id"] == "dec-9"
+        assert rec["provider"] == "null"
+        assert "answers" in rec["error"]
 
     def test_failure_logged_with_error(self, caplog):
         caplog.set_level(logging.INFO, logger="spirrow_prismind.rerank.decision")

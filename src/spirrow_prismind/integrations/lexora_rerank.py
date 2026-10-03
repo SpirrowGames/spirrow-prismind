@@ -172,14 +172,18 @@ class LexoraReranker:
         * Otherwise: ``has_answer < min_noul`` → empty list (no match).
           Else the first ``top_n`` candidates sorted by their
           ``answers_query_<i>`` noul, descending (a stable sort, so ties
-          keep search order), followed by anything past ``top_n`` in its
-          original order, and cut to ``keep_k``.
+          keep search order), cut to ``keep_k``.
+
+        Candidates past ``top_n`` are not scored. msg-023 appended them
+        in search order, but ``keep_k <= top_n`` (validated) means they
+        could never survive the ``keep_k`` cut once decision B restored
+        ``keep_k``, so they are simply dropped on the re-ranked path.
+        They still come back on every fallback path.
         """
         cfg = self.config
         original = list(candidates)
         n = len(original)
         head = original[: cfg.top_n]
-        tail = original[cfg.top_n:]
         record: dict[str, Any] = {
             "event": "prismind.rerank",
             "policy": cfg.policy,
@@ -210,7 +214,7 @@ class LexoraReranker:
             )
             response.raise_for_status()
             payload = response.json()
-            provider, decision_id, answers = _parse_response(payload)
+            provider, decision_id = _parse_header(payload)
         except (httpx.HTTPError, ValueError) as exc:
             outcome.error = f"{type(exc).__name__}: {exc}"
             record["error"] = outcome.error
@@ -222,7 +226,12 @@ class LexoraReranker:
         record["provider"] = provider
         record["decision_id"] = decision_id
 
+        # decision_id is already recorded, so a malformed answers object
+        # still leaves the offline join key in the log line.
         try:
+            answers = payload.get("answers")
+            if not isinstance(answers, dict):
+                raise ValueError("response has no answers object")
             has_answer = _noul(answers, HAS_ANSWER)
             scores = [_noul(answers, question_name(i)) for i in range(len(head))]
         except ValueError as exc:
@@ -247,7 +256,7 @@ class LexoraReranker:
             return self._finish(outcome, record)
 
         order = sorted(range(len(head)), key=lambda i: -scores[i])
-        outcome.items = ([head[i] for i in order] + tail)[: cfg.keep_k]
+        outcome.items = [head[i] for i in order][: cfg.keep_k]
         record["reranked_order"] = [id_of(c) for c in outcome.items]
         return self._finish(outcome, record)
 
@@ -258,19 +267,17 @@ class LexoraReranker:
         return outcome
 
 
-def _parse_response(payload: Any) -> tuple[str, str, dict[str, Any]]:
+def _parse_header(payload: Any) -> tuple[str, str]:
+    """Return ``(provider, decision_id)``; answers are checked separately."""
     if not isinstance(payload, dict):
         raise ValueError("response body is not an object")
     provider = payload.get("provider")
     decision_id = payload.get("decision_id")
-    answers = payload.get("answers")
     if not isinstance(provider, str) or not provider:
         raise ValueError("response has no provider")
     if not isinstance(decision_id, str) or not decision_id:
         raise ValueError("response has no decision_id")
-    if not isinstance(answers, dict):
-        raise ValueError("response has no answers object")
-    return provider, decision_id, answers
+    return provider, decision_id
 
 
 def _noul(answers: dict[str, Any], name: str) -> float:
