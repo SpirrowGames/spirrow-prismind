@@ -46,3 +46,25 @@ format = "text"
 auto_save_interval = 20
 # User name (shared across multiple PCs for session state identification)
 user_name = ""
+
+[rerank]
+# Re-rank search_knowledge candidates with Lexora /v1/decide
+# (T-decide-rerank). Off by default; when off, Lexora is never called.
+enabled = false
+# Lexora base URL (POST <lexora_url>/v1/decide). No TypeSafe SDK is used.
+lexora_url = "http://localhost:8110"
+# /v1/decide policy tag (filter Lexora's decision log by it)
+policy = "prismind.rerank"
+# Recorded verbatim in Lexora's decision log; bump when the questions change
+questions_version = "prismind.rerank/v1"
+# Candidates per request. The request always carries top_n questions
+# (padded when fewer candidates exist) so questions_hash stays constant.
+top_n = 30
+# Re-ranked candidates handed on (also capped by the caller's limit)
+keep_k = 8
+# Characters of each candidate sent in state. top_n * this must be <= 30000.
+max_chars_per_candidate = 600
+# HTTP timeout for the /v1/decide call, seconds. On failure: search order.
+timeout_s = 10
+# has_answer below this returns no RAG candidates ("no match")
+min_noul = 0.35

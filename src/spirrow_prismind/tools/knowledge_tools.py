@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from ..integrations import MemoryClient, RAGClient
+from ..integrations.lexora_rerank import LexoraReranker
 from ..models import (
     AddKnowledgeResult,
     DeleteKnowledgeResult,
@@ -56,6 +57,7 @@ class KnowledgeTools:
         project_tools: ProjectTools,
         memory_client: Optional[MemoryClient] = None,
         user_name: str = "default",
+        reranker: Optional[LexoraReranker] = None,
     ):
         """Initialize knowledge tools.
 
@@ -64,11 +66,14 @@ class KnowledgeTools:
             project_tools: Project tools for config access
             memory_client: Memory client for caching (optional)
             user_name: Default user ID
+            reranker: Lexora /v1/decide re-ranker ([rerank]); None or
+                disabled leaves search_knowledge exactly as before
         """
         self.rag = rag_client
         self.project_tools = project_tools
         self.memory = memory_client
         self.user_name = user_name
+        self.reranker = reranker
 
         # Sync any pending knowledge if RAG is available
         if self.rag.is_available and self.memory:
@@ -373,14 +378,20 @@ class KnowledgeTools:
                 limit=limit,
             )
 
+        rerank = self.reranker if (self.reranker and self.reranker.enabled) else None
+
         # Search RAG with project filter
         # RAG will include general knowledge (empty project) via $or clause when project is specified
+        n_results = limit * 2 if include_general else limit  # Get more results if including general
+        if rerank:
+            # Fetch at least top_n candidates to re-rank (T-decide-rerank B3)
+            n_results = max(rerank.config.top_n, n_results)
         result = self.rag.search_knowledge(
             query=query,
             category=category,
             project=search_project,  # Always pass project for proper filtering
             tags=tags,
-            n_results=limit * 2 if include_general else limit,  # Get more results if including general
+            n_results=n_results,
         )
 
         if not result.success:
@@ -435,6 +446,19 @@ class KnowledgeTools:
                 filtered = [k for k in knowledge if k.project == search_project]
             knowledge = filtered
 
+        # Re-rank the RAG candidates only; the memory cache is merged
+        # below exactly as before (T-decide-rerank B3).
+        no_match = False
+        if rerank:
+            outcome = rerank.rerank(
+                query,
+                knowledge,
+                text_of=lambda k: k.content,
+                id_of=lambda k: k.knowledge_id,
+            )
+            knowledge = outcome.items
+            no_match = outcome.no_match
+
         # Merge with cached recent knowledge (for immediate availability)
         existing_ids = {k.knowledge_id for k in knowledge}
         if self.memory and self.memory.is_available:
@@ -474,11 +498,15 @@ class KnowledgeTools:
         # Apply limit
         knowledge = knowledge[:limit]
 
+        message = f"{len(knowledge)} 件の知見が見つかりました。"
+        if no_match:
+            message += "（検索候補に問いへ答えるものは該当なし）"
+
         return SearchKnowledgeResult(
             success=True,
             total_count=len(knowledge),
             knowledge=knowledge,
-            message=f"{len(knowledge)} 件の知見が見つかりました。",
+            message=message,
         )
 
     def _search_from_cache(

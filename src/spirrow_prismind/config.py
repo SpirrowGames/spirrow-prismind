@@ -64,6 +64,89 @@ class SessionConfig:
     user_name: str = ""
 
 
+#: Upper bound on the candidate text Prismind packs into one /v1/decide
+#: ``state`` (``top_n * max_chars_per_candidate``). msg-001 puts the
+#: upstream state limit at "~32K tokens"; Japanese text runs at roughly a
+#: token per character, so 30 000 characters leaves room for the query and
+#: the JSON framing. The value is Prismind's own guard, not a number
+#: Lexora enforces (T-decide-rerank msg-005 B5).
+RERANK_MAX_STATE_CHARS = 30_000
+
+
+@dataclass
+class RerankConfig:
+    """Search-result re-ranking through Lexora ``/v1/decide``.
+
+    T-decide-rerank: msg-001 (spec), msg-005 / msg-023 (design), and the
+    human decision "B" that restored ``keep_k`` and ``has_answer``
+    filtering from msg-001.
+    """
+    enabled: bool = False
+    lexora_url: str = "http://localhost:8110"
+    policy: str = "prismind.rerank"  # /v1/decide policy tag
+    questions_version: str = "prismind.rerank/v1"
+    top_n: int = 30  # candidates sent per request (questions are always top_n)
+    keep_k: int = 8  # reranked candidates kept for the caller
+    max_chars_per_candidate: int = 600
+    timeout_s: float = 10.0
+    min_noul: float = 0.35  # has_answer below this -> "no match"
+
+    def validation_errors(self) -> list[str]:
+        """Return every problem with this section (empty = valid)."""
+        errors: list[str] = []
+        if self.top_n < 1:
+            errors.append(f"rerank.top_n must be at least 1 (got {self.top_n})")
+        if not 1 <= self.keep_k <= max(self.top_n, 1):
+            errors.append(
+                f"rerank.keep_k must be between 1 and top_n={self.top_n} "
+                f"(got {self.keep_k})"
+            )
+        if self.max_chars_per_candidate < 1:
+            errors.append(
+                "rerank.max_chars_per_candidate must be at least 1 "
+                f"(got {self.max_chars_per_candidate})"
+            )
+        state_chars = self.top_n * self.max_chars_per_candidate
+        if state_chars > RERANK_MAX_STATE_CHARS:
+            errors.append(
+                f"rerank.top_n * rerank.max_chars_per_candidate = {state_chars} "
+                f"exceeds the state limit of {RERANK_MAX_STATE_CHARS} characters"
+            )
+        if not 0.0 <= self.min_noul <= 1.0:
+            errors.append(f"rerank.min_noul must be within 0..1 (got {self.min_noul})")
+        if self.timeout_s <= 0:
+            errors.append(f"rerank.timeout_s must be positive (got {self.timeout_s})")
+        if not self.policy:
+            errors.append("rerank.policy must not be empty")
+        if self.enabled and not self.lexora_url:
+            errors.append("rerank.lexora_url is required when rerank.enabled = true")
+        return errors
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RerankConfig":
+        """Build the section and reject an invalid one at load time."""
+        defaults = cls()
+        config = cls(
+            enabled=bool(data.get("enabled", defaults.enabled)),
+            lexora_url=str(data.get("lexora_url", defaults.lexora_url)),
+            policy=str(data.get("policy", defaults.policy)),
+            questions_version=str(
+                data.get("questions_version", defaults.questions_version)
+            ),
+            top_n=int(data.get("top_n", defaults.top_n)),
+            keep_k=int(data.get("keep_k", defaults.keep_k)),
+            max_chars_per_candidate=int(
+                data.get("max_chars_per_candidate", defaults.max_chars_per_candidate)
+            ),
+            timeout_s=float(data.get("timeout_s", defaults.timeout_s)),
+            min_noul=float(data.get("min_noul", defaults.min_noul)),
+        )
+        errors = config.validation_errors()
+        if errors:
+            raise ValueError("Invalid [rerank] configuration: " + "; ".join(errors))
+        return config
+
+
 @dataclass
 class Config:
     """Application configuration."""
@@ -72,6 +155,7 @@ class Config:
     documents: DocumentsConfig = field(default_factory=DocumentsConfig)
     log: LogConfig = field(default_factory=LogConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    rerank: RerankConfig = field(default_factory=RerankConfig)
 
     @classmethod
     def load(cls, config_path: Optional[str] = None) -> "Config":
@@ -159,6 +243,7 @@ class Config:
                 auto_save_interval=data.get("session", {}).get("auto_save_interval", 20),
                 user_name=data.get("session", {}).get("user_name", ""),
             ),
+            rerank=RerankConfig.from_dict(data.get("rerank", {})),
         )
 
     def validate(self) -> list[str]:
@@ -186,6 +271,8 @@ class Config:
 
         if self.services.memory_server_type not in ["rest", "mcp"]:
             errors.append(f"Invalid memory_server_type: {self.services.memory_server_type} (must be 'rest' or 'mcp')")
+
+        errors.extend(self.rerank.validation_errors())
 
         return errors
 
