@@ -100,6 +100,31 @@ def build_state(query: str, texts: Sequence[str], top_n: int, max_chars: int) ->
     )
 
 
+def rerank_order(
+    scores: Sequence[float],
+    has_answer: float,
+    *,
+    keep_k: int,
+    min_noul: float,
+) -> Optional[list[int]]:
+    """The re-ranking rule, on slot indices only.
+
+    ``scores[i]`` is the ``answers_query_<i>`` noul of scored slot ``i``;
+    pass only the real slots (``i < min(N, top_n)``), never the padding.
+
+    * ``has_answer < min_noul`` → ``None`` (「該当なし」: hand nothing on).
+    * Otherwise the indices sorted by score, highest first, cut to
+      ``keep_k``. The sort is stable, so ties keep search order.
+
+    Shared by :meth:`LexoraReranker.rerank` and the offline evaluation
+    (``scripts/eval_rerank.py``) so the two cannot drift apart
+    (T-decide-rerank msg-066).
+    """
+    if has_answer < min_noul:
+        return None
+    return sorted(range(len(scores)), key=lambda i: -scores[i])[:keep_k]
+
+
 @dataclass
 class RerankOutcome:
     """What :meth:`LexoraReranker.rerank` did with one candidate list."""
@@ -138,11 +163,6 @@ class LexoraReranker:
     @property
     def enabled(self) -> bool:
         return self.config.enabled
-
-    @property
-    def questions(self) -> dict[str, dict[str, Any]]:
-        """The fixed question set sent on every request (a copy)."""
-        return json.loads(json.dumps(self._questions))
 
     def build_request(self, query: str, texts: Sequence[str]) -> dict[str, Any]:
         """Return the ``POST /v1/decide`` body for the head of ``texts``."""
@@ -257,14 +277,14 @@ class LexoraReranker:
 
         outcome.reranked = True
         record["reranked"] = True
-        if has_answer < cfg.min_noul:
+        order = rerank_order(scores, has_answer, keep_k=cfg.keep_k, min_noul=cfg.min_noul)
+        if order is None:
             outcome.no_match = True
             record["no_match"] = True
             outcome.items = []
             return self._finish(outcome, record)
 
-        order = sorted(range(len(head)), key=lambda i: -scores[i])
-        outcome.items = [head[i] for i in order][: cfg.keep_k]
+        outcome.items = [head[i] for i in order]
         record["reranked_order"] = [id_of(c) for c in outcome.items]
         return self._finish(outcome, record)
 
