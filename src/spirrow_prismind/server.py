@@ -29,6 +29,7 @@ from .integrations import (
     MemoryClient,
     RAGClient,
 )
+from .integrations.lexora_rerank import LexoraReranker
 from .tools import (
     CatalogTools,
     DocumentTools,
@@ -1530,6 +1531,11 @@ class PrismindServer:
             project_tools=self._project_tools,
             memory_client=self._memory_client,
             user_name=self.config.user_name,
+            reranker=(
+                LexoraReranker(self.config.rerank)
+                if self.config.rerank.enabled
+                else None
+            ),
         )
         
         self._initialized = True
