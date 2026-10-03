@@ -133,15 +133,17 @@ class TestValidatePairs:
 # --------------------------------------------------------------------------
 
 
-def _tools(ids, decision_id="dec-1", enabled=True):
+def _tools(ids, decision_id="dec-1", enabled=True, top_n=4, keep_k=2, requests=None):
     def respond(request):
+        if requests is not None:
+            requests.append(json.loads(request.content))
         body = {
-            "answers": json.loads(answers([0.5] * 4, 0.5)),
+            "answers": json.loads(answers([0.5] * top_n, 0.5, top_n)),
             "provider": "null", "decision_id": decision_id, "latency_ms": 1,
         }
         return httpx.Response(200, json=body)
 
-    cfg = RerankConfig(enabled=enabled, lexora_url="http://lexora", top_n=4, keep_k=2)
+    cfg = RerankConfig(enabled=enabled, lexora_url="http://lexora", top_n=top_n, keep_k=keep_k)
     reranker = LexoraReranker(cfg, http_client=httpx.Client(transport=httpx.MockTransport(respond)))
     return KnowledgeTools(
         rag_client=FakeRAG(ids), project_tools=None, memory_client=None,
@@ -169,6 +171,26 @@ class TestRunPairs:
         assert first["n_candidates"] == 4
         assert first["original_order"] == ids[:4]
         assert first["index_map"] == {"0": "k0", "1": "k1", "2": "k2", "3": "k3"}
+
+    @pytest.mark.parametrize("corpus, expected", [(40, 30), (12, 12)])
+    def test_limit_keep_k_still_scores_the_full_top_n_pool(self, corpus, expected):
+        # Einstein msg-072 objection 1 / Bohr msg-073: run-pairs searches with
+        # limit = keep_k, yet the re-ranker must see min(corpus, top_n)
+        # candidates, not keep_k (knowledge_tools: n_results = max(top_n, ...)).
+        # A change that shrinks the pool to keep_k fails here.
+        ids = [f"k{i}" for i in range(corpus)]
+        requests: list[dict] = []
+        tools = _tools(ids, top_n=30, keep_k=8, requests=requests)
+        lines = eval_rerank.run_pairs([pair("a", ["k0"])], tools, keep_k=8)
+        assert tools.rag.n_results_seen == [30]
+        line = lines[0]
+        assert line["n_candidates"] == expected
+        assert len(line["index_map"]) == expected
+        assert len(requests) == 1
+        state = json.loads(requests[0]["state"])
+        scored = [c for c in state["candidates"] if c["text"]]
+        assert len(scored) == expected
+        assert len(state["candidates"]) == 30  # padded to top_n, never keep_k
 
     def test_skipped_rerank_fails_loudly(self):
         # A disabled re-ranker logs nothing; run_pairs must not write a
@@ -226,28 +248,68 @@ class TestJoinAndRebuild:
         g.write_text(json.dumps(shadow_row("d1", [0.9])) + "\n", encoding="utf-8")
         assert eval_rerank.read_rows(f) == eval_rerank.read_rows(g)
 
+    # msg-073 group (b): the evaluation data was not collected.
     @pytest.mark.parametrize("lexora, reason", [
         ([], "no_lexora_row"),
         ([null_row("d1")], "null_answer_only"),
-        ([null_row("d1"), shadow_row("d1", [], error="jev:timeout")], "shadow_failed"),
-        ([{**shadow_row("d1", [0.9]), "answers_json": json.dumps({HAS_ANSWER: {"noul": 0.9}})}],
-         "bad_answers"),
     ])
-    def test_join_failures_counted_by_reason(self, lexora, reason):
+    def test_not_collected_is_excluded_and_incomplete(self, lexora, reason):
         r = _score([pair("a", ["k0"])], [prismind_line("a", ["k0"], "d1")], lexora)
         assert r["evaluated"] == 0
-        assert r["join"]["failed"] == 1
-        assert r["join"]["by_reason"] == {reason: 1}
+        assert r["join"] == {"not_collected": 1, "by_reason": {reason: 1}}
+        assert r["fallback"]["count"] == 0
+        assert r["incomplete"].startswith("INCOMPLETE: re-extract Lexora log")
 
-    def test_missing_prismind_line_and_decision_id(self):
-        lines = [{**prismind_line("b", ["k0"], "d1"), "decision_id": None}]
-        r = _score([pair("a", ["k0"]), pair("b", ["k0"])], lines, [])
-        assert r["join"]["by_reason"] == {"no_prismind_line": 1, "no_decision_id": 1}
+    def test_missing_prismind_line_is_not_collected(self):
+        r = _score([pair("a", ["k0"])], [], [])
+        assert r["evaluated"] == 0
+        assert r["join"]["by_reason"] == {"no_prismind_line": 1}
+        assert r["incomplete"] is not None
+
+    # msg-073 group (a): production would have fallen back to search order.
+    @pytest.mark.parametrize("decision_id, lexora, reason", [
+        (None, [], "no_decision_id"),
+        ("d1", [null_row("d1"), shadow_row("d1", [], error="jev:timeout")], "shadow_failed"),
+        ("d1", [{**shadow_row("d1", [0.9]), "answers_json": json.dumps({HAS_ANSWER: {"noul": 0.9}})}],
+         "bad_answers"),
+    ])
+    def test_fallback_is_scored_as_search_order_in_the_denominators(self, decision_id, lexora, reason):
+        ids = ["k0", "k1", "k2", "k3", "k4"]
+        line = {**prismind_line("a", ids, "d1"), "decision_id": decision_id}
+        r = _score([pair("a", ["k1"])], [line], lexora)
+        assert r["incomplete"] is None
+        assert r["join"]["not_collected"] == 0
+        assert r["evaluated"] == 1
+        assert r["sources"]["fallback"] == 1
+        assert r["fallback"] == {"count": 1, "rate": 1.0, "by_reason": {reason: 1}}
+        row = r["per_pair"][0]
+        assert row["fallback_reason"].startswith(reason)
+        assert row["after"] == row["before"] == ["k0", "k1"]  # search order, not 該当なし
+        assert not row["no_match"]
+        # In every denominator, with after == before: no gain is credited.
+        assert r["retrieval"] == {"gold_in_head": 1, "rate": 1.0}
+        for block in ("reranker", "overall"):
+            assert r[block]["n"] == 1
+            assert r[block]["after"] == r[block]["before"]
+            assert r[block]["after"]["topk"] == 1 and r[block]["after"]["top1"] == 0
+
+    def test_fallback_dilutes_rather_than_disappears(self):
+        # One real rerank lifting gold to top-1 plus one fallback: the rate is
+        # 1/2, not the 1/1 that dropping the fallback would report.
+        ids = ["k0", "k1", "k2", "k3"]
+        r = _score(
+            [pair("a", ["k2"]), pair("b", ["k2"])],
+            [prismind_line("a", ids, "d1"), prismind_line("b", ids, "d2")],
+            [shadow_row("d1", [0.1, 0.2, 0.9, 0.3]), shadow_row("d2", [], error="jev:timeout")],
+        )
+        assert r["overall"]["n"] == 2
+        assert r["overall"]["after"]["top1_rate"] == 0.5
+        assert r["fallback"]["rate"] == 0.5
 
     def test_zero_candidates_evaluated_without_lexora(self):
         r = _score([pair("a", ["k0"])], [prismind_line("a", [], None)], [])
-        assert r["evaluated"] == 1 and r["join"]["failed"] == 0
-        assert r["join"]["sources"]["no_candidates"] == 1
+        assert r["evaluated"] == 1 and r["join"]["not_collected"] == 0
+        assert r["sources"]["no_candidates"] == 1
         assert r["retrieval"]["gold_in_head"] == 0
         assert r["no_match"]["count"] == 0
 
@@ -313,8 +375,42 @@ def test_score_cli_end_to_end(tmp_path, capsys):
         "--prismind-log", str(tmp_path / "p.jsonl"), "--lexora-log", str(tmp_path / "l.jsonl"),
     ])
     assert rc == 0
-    out = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    out = json.loads(captured.out)
+    assert list(out)[:3] == ["incomplete", "join", "fallback"]
+    assert out["incomplete"] is None
     assert out["config"] == {"top_n": 30, "keep_k": 8, "min_noul": 0.35}
     assert out["reranker"]["after"]["top1"] == 1
     assert out["reranker"]["before"]["top1"] == 0
     assert "per_pair" not in out
+
+
+def test_score_cli_incomplete_warns_first_and_exits_nonzero(tmp_path, capsys):
+    ids = ["k0", "k1"]
+    nl = "\n"
+    (tmp_path / "pairs.jsonl").write_text(
+        json.dumps(pair("a", ["k1"])) + nl + json.dumps(pair("b", ["k1"])) + nl, encoding="utf-8"
+    )
+    (tmp_path / "p.jsonl").write_text(
+        json.dumps(prismind_line("a", ids, "d1")) + nl + json.dumps(prismind_line("b", ids, "d2")) + nl,
+        encoding="utf-8",
+    )
+    # The export missed d2's shadow row: only its null row came out.
+    (tmp_path / "l.jsonl").write_text(
+        json.dumps(shadow_row("d1", [0.1, 0.9])) + nl + json.dumps(null_row("d2")) + nl,
+        encoding="utf-8",
+    )
+    rc = eval_rerank.main([
+        "score", "--pairs", str(tmp_path / "pairs.jsonl"),
+        "--prismind-log", str(tmp_path / "p.jsonl"), "--lexora-log", str(tmp_path / "l.jsonl"),
+    ])
+    assert rc == eval_rerank.EXIT_INCOMPLETE
+    assert rc != 0
+    captured = capsys.readouterr()
+    assert captured.err.startswith("INCOMPLETE: re-extract Lexora log")
+    out = json.loads(captured.out)
+    assert list(out)[0] == "incomplete"
+    assert out["incomplete"].startswith("INCOMPLETE: re-extract Lexora log (1 of 2")
+    assert out["join"] == {"not_collected": 1, "by_reason": {"null_answer_only": 1}}
+    assert out["evaluated"] == 1
