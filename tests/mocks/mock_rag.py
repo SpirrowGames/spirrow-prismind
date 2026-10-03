@@ -9,6 +9,7 @@ from spirrow_prismind.integrations.rag_client import (
     RAGDocument,
     RAGOperationResult,
     RAGSearchResult,
+    _new_knowledge_id,
 )
 
 
@@ -358,7 +359,8 @@ class MockRAGClient(RAGClient):
         source: Optional[str] = None,
     ) -> RAGOperationResult:
         """Add a knowledge entry."""
-        doc_id = f"knowledge:{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        # Same id shape as production (see rag_client._new_knowledge_id).
+        doc_id = _new_knowledge_id()
 
         metadata = {
             "type": "knowledge",

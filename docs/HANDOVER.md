@@ -124,7 +124,7 @@ default_user = "default"
 
 ### RAGデータ
 - プロジェクト設定: `doc_id="project:{project_id}"`, `metadata.type="project_config"`
-- 知見: `doc_id="knowledge:{timestamp}"`, `metadata.type="knowledge"`
+- 知見: `doc_id="knowledge:{timestamp(UTC)}-{rand8}"`（旧形式 `knowledge:{timestamp}` の既存 id もそのまま有効）, `metadata.type="knowledge"`
 - 目録: `doc_id="catalog:{project}:{doc_id}"`, `metadata.type="catalog"`
 
 ### Memoryキー
