@@ -438,8 +438,8 @@ class TestDecisionLog:
         assert rec["called"] is False
         assert rec["n_candidates"] == 0
 
-    def test_missing_answers_still_logs_decision_id(self, caplog):
-        caplog.set_level(logging.INFO, logger="spirrow_prismind.rerank.decision")
+    def test_null_provider_without_answers_is_not_an_error(self, caplog):
+        caplog.set_level(logging.INFO, logger="spirrow_prismind.rerank")
         handler = Lexora(lambda r: httpx.Response(
             200, json={"provider": "null", "decision_id": "dec-9", "latency_ms": 1}
         ))
@@ -447,9 +447,26 @@ class TestDecisionLog:
             "q", ["a", "b"], text_of=lambda k: k, id_of=lambda k: k
         )
         assert outcome.items == ["a", "b"]
+        assert outcome.error is None
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
         (rec,) = self._records(caplog)
         assert rec["decision_id"] == "dec-9"
         assert rec["provider"] == "null"
+        assert rec["error"] is None
+        assert rec["has_answer"] is None
+        assert rec["reranked"] is False
+
+    def test_jev_missing_answers_logs_error_with_decision_id(self, caplog):
+        caplog.set_level(logging.INFO, logger="spirrow_prismind.rerank.decision")
+        handler = Lexora(lambda r: httpx.Response(
+            200, json={"provider": "jev", "decision_id": "dec-10", "latency_ms": 1}
+        ))
+        outcome = make_reranker(handler).rerank(
+            "q", ["a", "b"], text_of=lambda k: k, id_of=lambda k: k
+        )
+        assert outcome.items == ["a", "b"]
+        (rec,) = self._records(caplog)
+        assert rec["decision_id"] == "dec-10"
         assert "answers" in rec["error"]
 
     def test_failure_logged_with_error(self, caplog):

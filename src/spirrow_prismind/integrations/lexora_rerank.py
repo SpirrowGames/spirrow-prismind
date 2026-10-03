@@ -226,6 +226,18 @@ class LexoraReranker:
         record["provider"] = provider
         record["decision_id"] = decision_id
 
+        if provider == "null":
+            # shadow / off / active-mode fallback: no judgement to act on.
+            # Decided on provider alone, before any answers are required:
+            # whatever shape the answers take here is not an error. has_answer
+            # is recorded only when it happens to be well-formed.
+            try:
+                outcome.has_answer = _noul(payload.get("answers") or {}, HAS_ANSWER)
+                record["has_answer"] = outcome.has_answer
+            except ValueError:
+                pass
+            return self._finish(outcome, record)
+
         # decision_id is already recorded, so a malformed answers object
         # still leaves the offline join key in the log line.
         try:
@@ -242,10 +254,6 @@ class LexoraReranker:
 
         outcome.has_answer = has_answer
         record["has_answer"] = has_answer
-
-        if provider == "null":
-            # shadow / off / active-mode fallback: no judgement to act on.
-            return self._finish(outcome, record)
 
         outcome.reranked = True
         record["reranked"] = True
@@ -280,7 +288,9 @@ def _parse_header(payload: Any) -> tuple[str, str]:
     return provider, decision_id
 
 
-def _noul(answers: dict[str, Any], name: str) -> float:
+def _noul(answers: Any, name: str) -> float:
+    if not isinstance(answers, dict):
+        raise ValueError("answers is not an object")
     answer = answers.get(name)
     if not isinstance(answer, dict):
         raise ValueError(f"answer {name!r} missing")
