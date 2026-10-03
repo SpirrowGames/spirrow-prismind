@@ -1,6 +1,7 @@
 """RAG (Retrieval-Augmented Generation) server client for knowledge management."""
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
@@ -17,6 +18,25 @@ DOCUMENT_TYPES_COLLECTION = "document_types"
 # Default similarity threshold for document type matching
 # BGE-M3 embeddings typically return scores in 0.5-0.7 range for semantic matches
 DEFAULT_SIMILARITY_THRESHOLD = 0.45
+
+
+def _new_knowledge_id() -> str:
+    """Return a fresh knowledge document id.
+
+    Format: ``knowledge:{YYYYmmddHHMMSSffffff}-{rand8}``.
+
+    The timestamp alone is not unique: on hosts with a coarse clock
+    (Windows' ``datetime.now()`` can repeat across many calls) two adds in a
+    row would get the same id, and ``add_knowledge`` sends a plain ``add``
+    (not an upsert), so the second entry could be silently lost. The 32-bit
+    random suffix makes ids distinct without any per-process state, so it
+    also holds across processes writing to the same RAG collection. The
+    timestamp prefix is kept so ids still sort in creation order.
+
+    Existing ``knowledge:{timestamp}`` ids are left as they are: every reader
+    uses the id as an exact-match key, so old and new forms coexist.
+    """
+    return f"knowledge:{datetime.now().strftime('%Y%m%d%H%M%S%f')}-{uuid.uuid4().hex[:8]}"
 
 
 @dataclass
@@ -661,7 +681,7 @@ class RAGClient:
         Returns:
             RAGOperationResult
         """
-        doc_id = f"knowledge:{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        doc_id = _new_knowledge_id()
         
         metadata = {
             "type": "knowledge",

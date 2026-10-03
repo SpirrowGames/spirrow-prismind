@@ -1,6 +1,5 @@
 """Mock RAG client for testing."""
 
-import itertools
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
@@ -10,10 +9,8 @@ from spirrow_prismind.integrations.rag_client import (
     RAGDocument,
     RAGOperationResult,
     RAGSearchResult,
+    _new_knowledge_id,
 )
-
-
-_KNOWLEDGE_SEQ = itertools.count()
 
 
 class MockRAGClient(RAGClient):
@@ -362,14 +359,8 @@ class MockRAGClient(RAGClient):
         source: Optional[str] = None,
     ) -> RAGOperationResult:
         """Add a knowledge entry."""
-        # The timestamp alone is not unique: on hosts with a coarse clock
-        # (Windows' datetime.now() can repeat across many calls) two adds in
-        # a row would get the same id and the second would overwrite the
-        # first. A per-process sequence suffix keeps ids distinct.
-        doc_id = (
-            f"knowledge:{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
-            f"-{next(_KNOWLEDGE_SEQ)}"
-        )
+        # Same id shape as production (see rag_client._new_knowledge_id).
+        doc_id = _new_knowledge_id()
 
         metadata = {
             "type": "knowledge",
