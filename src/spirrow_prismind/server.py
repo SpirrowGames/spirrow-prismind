@@ -43,6 +43,34 @@ from .transport import parse_args, serve_sse
 
 logger = logging.getLogger(__name__)
 
+# Tools that must never overlap a catalog rebuild. A rebuild deletes a
+# project's whole RAG catalog and re-adds it one document at a time, which
+# takes minutes, so in that window:
+# - a search or a read sees only part of the catalog;
+# - a create or delete is undone, because the rebuild scanned the store
+#   before it and its delete/re-add lands after it;
+# - project configs, which the rebuild reads to map a project to its
+#   repository, must not change under it (the document type tools rewrite
+#   them too).
+# Everything else may run while a rebuild is in progress. The one catalog
+# reader left out on purpose is start_session: its recommended documents may
+# be incomplete during a rebuild, which is better than holding it for minutes.
+_CATALOG_TOOLS = frozenset({
+    "sync_catalog",
+    "search_catalog",
+    "get_document",
+    "list_documents",
+    "create_document",
+    "update_document",
+    "delete_document",
+    "register_document_type",
+    "delete_document_type",
+    "setup_project",
+    "update_project",
+    "delete_project",
+    "sync_projects_from_drive",
+})
+
 # Tool definitions
 TOOLS = [
     # Setup Wizard
@@ -1384,6 +1412,17 @@ class PrismindServer:
             max_workers=1, thread_name_prefix="prismind-tool"
         )
 
+        # A filesystem catalog rebuild takes minutes (it re-embeds every
+        # document). On the tool worker it held every other call for that
+        # long, get_identity and checkpoint included, so it runs on a worker
+        # of its own (see _rebuild_runs_alone). _catalog_lock keeps the tools
+        # in _CATALOG_TOOLS from overlapping it; it is taken on the event
+        # loop, so a call waiting for it does not hold the tool worker.
+        self._catalog_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="prismind-catalog"
+        )
+        self._catalog_lock = asyncio.Lock()
+
         # Register handlers
         self._register_handlers()
 
@@ -1640,10 +1679,49 @@ class PrismindServer:
             }, ensure_ascii=False))]
 
     async def _dispatch_tool(self, name: str, args: dict) -> dict:
-        """Dispatch a tool call on the tool executor, off the event loop."""
+        """Dispatch a tool call on a worker thread, off the event loop."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._tool_executor, self._dispatch_tool_sync, name, args
+        if name not in _CATALOG_TOOLS:
+            return await loop.run_in_executor(
+                self._tool_executor, self._dispatch_tool_sync, name, args
+            )
+
+        executor = self._tool_executor
+        if name == "sync_catalog" and self._rebuild_runs_alone(args):
+            executor = self._catalog_executor
+
+        await self._catalog_lock.acquire()
+        try:
+            future = loop.run_in_executor(
+                executor, self._dispatch_tool_sync, name, args
+            )
+        except BaseException:
+            self._catalog_lock.release()
+            raise
+
+        def release(done: asyncio.Future) -> None:
+            self._catalog_lock.release()
+            if not done.cancelled():
+                done.exception()  # retrieved here if the caller stopped waiting
+
+        # Release when the call finishes, not when the caller stops waiting:
+        # a cancelled MCP request leaves its call running on the worker, and
+        # nothing in _CATALOG_TOOLS may start while it does.
+        future.add_done_callback(release)
+        return await asyncio.shield(future)
+
+    def _rebuild_runs_alone(self, args: dict) -> bool:
+        """Whether sync_catalog may run beside the tool worker.
+
+        Only a filesystem rebuild of a named project: it reads files and talks
+        to RAG over the thread-safe httpx client, and the project configs it
+        reads cannot change under it (_CATALOG_TOOLS). Without a project it
+        asks the memory client for the current one, and the Google backend
+        reads Sheets and Docs; neither client is safe to share across threads,
+        so those rebuilds stay on the tool worker.
+        """
+        return bool(args.get("project")) and isinstance(
+            self._document_store, FilesystemDocumentStore
         )
 
     def _dispatch_tool_sync(self, name: str, args: dict) -> dict:
