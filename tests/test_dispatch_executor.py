@@ -181,3 +181,22 @@ def test_rebuilds_that_share_clients_stay_on_the_tool_worker(filesystem, args):
     asyncio.run(server._dispatch_tool("sync_catalog", args))
 
     assert log[0][2].startswith("prismind-tool")
+
+
+def test_tool_worker_occupancy_is_visible_while_a_call_runs():
+    seen: list = []
+    server = PrismindServer()
+    server._initialized = True
+
+    def list_projects(*_a, **_k):
+        seen.append(server._tool_worker.snapshot())
+        return MagicMock(success=True, projects=[], current_project=None, message="ok")
+
+    server._project_tools = MagicMock()
+    server._project_tools.list_projects.side_effect = list_projects
+
+    asyncio.run(server._dispatch_tool("list_projects", {}))
+
+    assert seen and seen[0]["busy"] is True
+    assert seen[0]["current_tool"] == "list_projects"
+    assert server._tool_worker.snapshot()["busy"] is False

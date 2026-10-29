@@ -202,3 +202,37 @@ def test_lifespan_starts_watchdog_when_systemd_asks(monkeypatch):
     assert sent[0] == "READY=1"
     assert "WATCHDOG=1" in sent
     assert sent[-1] == "STOPPING=1"
+
+
+# === tool worker occupancy ===
+
+
+def test_health_reports_tool_executor_from_the_monitor():
+    now = [100.0]
+    monitor = transport.ToolWorkerMonitor(clock=lambda: now[0])
+    app = transport.build_sse_app(Server("test-prismind"), tool_count=1, tool_worker=monitor)
+
+    with TestClient(app) as client:
+        assert client.get("/health").json()["tool_executor"] == {
+            "busy": False, "current_tool": None, "busy_seconds": 0.0,
+        }
+        with monitor.running("get_identity"):
+            now[0] = 742.25
+            busy = client.get("/health").json()["tool_executor"]
+        idle = client.get("/health").json()["tool_executor"]
+
+    assert busy == {"busy": True, "current_tool": "get_identity", "busy_seconds": 642.25}
+    assert idle["busy"] is False
+
+
+def test_health_tool_executor_is_null_without_a_monitor(app):
+    with TestClient(app) as client:
+        assert client.get("/health").json()["tool_executor"] is None
+
+
+def test_monitor_clears_when_the_tool_raises():
+    monitor = transport.ToolWorkerMonitor()
+    with pytest.raises(RuntimeError):
+        with monitor.running("boom"):
+            raise RuntimeError("upstream")
+    assert monitor.snapshot()["busy"] is False

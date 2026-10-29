@@ -30,6 +30,7 @@ import contextlib
 import logging
 import os
 import socket
+import threading
 import time
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -157,6 +158,56 @@ async def watchdog_pinger(
         await sleep(interval)
 
 
+# === tool worker occupancy ===
+
+
+class ToolWorkerMonitor:
+    """Which tool the tool worker is running, and since when.
+
+    Tool bodies run on a single worker thread (``PrismindServer._tool_executor``).
+    One call that never returns -- an upstream HTTP read that keeps trickling
+    bytes, say -- holds that worker, and every call queued behind it,
+    ``get_identity`` included, waits forever. The event loop stays healthy
+    through all of it: the watchdog ping, ``tools/list`` and ``/health`` keep
+    answering, so none of the liveness layers notice. That is the 2026-09-14
+    outage (15.5 hours). Exposing the occupancy on ``/health`` lets the
+    healthcheck timer see it without calling a tool, and so without touching
+    any upstream itself.
+
+    Only the call that is *running* counts; calls queued behind it are not
+    tracked, because the age of the running one is what the threshold judges.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._tool: Optional[str] = None
+        self._started: Optional[float] = None
+
+    @contextlib.contextmanager
+    def running(self, tool: str):
+        with self._lock:
+            self._tool = tool
+            self._started = self._clock()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._tool = None
+                self._started = None
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            tool, started = self._tool, self._started
+        if started is None:
+            return {"busy": False, "current_tool": None, "busy_seconds": 0.0}
+        return {
+            "busy": True,
+            "current_tool": tool,
+            "busy_seconds": round(max(0.0, self._clock() - started), 3),
+        }
+
+
 # === SSE application ===
 
 
@@ -165,6 +216,7 @@ def build_sse_app(
     *,
     tool_count: int,
     started_at: Optional[float] = None,
+    tool_worker: Optional[ToolWorkerMonitor] = None,
 ) -> Starlette:
     """Build the ASGI app that serves this MCP server over SSE.
 
@@ -178,6 +230,10 @@ def build_sse_app(
     and never reaches for Google Drive, RAG or Memory. Upstream reachability
     is a separate question from "is prismind serving", and conflating them
     is how a health check starts flapping on someone else's outage.
+
+    ``tool_executor`` reports whether the tool worker is occupied and for how
+    long (see :class:`ToolWorkerMonitor`); it is read from memory, so it keeps
+    the same no-upstream rule. It is ``null`` when no monitor was supplied.
     """
     started = time.monotonic() if started_at is None else started_at
     sse = SseServerTransport(MESSAGE_ENDPOINT)
@@ -204,6 +260,9 @@ def build_sse_app(
                 "uptime_seconds": round(time.monotonic() - started, 3),
                 "tool_count": tool_count,
                 "active_sessions": _active_sessions(sse),
+                "tool_executor": (
+                    tool_worker.snapshot() if tool_worker is not None else None
+                ),
             }
         )
 
@@ -246,12 +305,19 @@ def _active_sessions(sse: SseServerTransport) -> int:
     return len(writers)
 
 
-async def serve_sse(mcp_server: Server, *, host: str, port: int, tool_count: int) -> None:
+async def serve_sse(
+    mcp_server: Server,
+    *,
+    host: str,
+    port: int,
+    tool_count: int,
+    tool_worker: Optional[ToolWorkerMonitor] = None,
+) -> None:
     """Serve the MCP server over SSE until the process is stopped."""
     # Imported here so stdio runs (tests, local clients) never pay for it.
     import uvicorn
 
-    app = build_sse_app(mcp_server, tool_count=tool_count)
+    app = build_sse_app(mcp_server, tool_count=tool_count, tool_worker=tool_worker)
     config = uvicorn.Config(
         app,
         host=host,

@@ -39,7 +39,7 @@ from .tools import (
     SessionTools,
     SetupTools,
 )
-from .transport import parse_args, serve_sse
+from .transport import ToolWorkerMonitor, parse_args, serve_sse
 
 logger = logging.getLogger(__name__)
 
@@ -1411,6 +1411,10 @@ class PrismindServer:
         self._tool_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="prismind-tool"
         )
+        # What the tool worker is running and since when, for /health. A
+        # call that never returns blocks everything queued behind it while
+        # the event loop (and so every other liveness signal) stays fine.
+        self._tool_worker = ToolWorkerMonitor()
 
         # A filesystem catalog rebuild takes minutes (it re-embeds every
         # document). On the tool worker it held every other call for that
@@ -1683,7 +1687,7 @@ class PrismindServer:
         loop = asyncio.get_running_loop()
         if name not in _CATALOG_TOOLS:
             return await loop.run_in_executor(
-                self._tool_executor, self._dispatch_tool_sync, name, args
+                self._tool_executor, self._run_on_tool_worker, name, args
             )
 
         executor = self._tool_executor
@@ -1692,9 +1696,12 @@ class PrismindServer:
 
         await self._catalog_lock.acquire()
         try:
-            future = loop.run_in_executor(
-                executor, self._dispatch_tool_sync, name, args
+            work = (
+                self._run_on_tool_worker
+                if executor is self._tool_executor
+                else self._dispatch_tool_sync
             )
+            future = loop.run_in_executor(executor, work, name, args)
         except BaseException:
             self._catalog_lock.release()
             raise
@@ -1723,6 +1730,11 @@ class PrismindServer:
         return bool(args.get("project")) and isinstance(
             self._document_store, FilesystemDocumentStore
         )
+
+    def _run_on_tool_worker(self, name: str, args: dict) -> dict:
+        """Run a tool on the tool worker, recording it for /health."""
+        with self._tool_worker.running(name):
+            return self._dispatch_tool_sync(name, args)
 
     def _dispatch_tool_sync(self, name: str, args: dict) -> dict:
         """Dispatch tool call to appropriate handler."""
@@ -2734,7 +2746,13 @@ class PrismindServer:
         process that answered MCP were different and only one of them was
         supervised. See ``transport.py`` for the failure that motivated it.
         """
-        await serve_sse(self.server, host=host, port=port, tool_count=len(TOOLS))
+        await serve_sse(
+            self.server,
+            host=host,
+            port=port,
+            tool_count=len(TOOLS),
+            tool_worker=self._tool_worker,
+        )
 
 
 def main(argv: Optional[list[str]] = None):
