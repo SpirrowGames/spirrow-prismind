@@ -17,6 +17,10 @@ ExecStart=/home/sgadmin/services/spirrow/spirrow-prismind/venv/bin/python \
     /home/sgadmin/services/spirrow/spirrow-prismind/scripts/healthcheck.py \
     --url http://127.0.0.1:8112/sse \
     --restart-unit spirrow-prismind.service
+# Restart history is the RESTART_EVENT lines this unit logs; there is no
+# separate file. Read it with:
+#   journalctl -t prismind-healthcheck -g RESTART_EVENT
+SyslogIdentifier=prismind-healthcheck
 # A failed probe exits non-zero on purpose, so an unhealthy server is also
 # visible in `systemctl --failed` -- including the runs where the restart
 # throttle suppressed the restart.

@@ -19,6 +19,18 @@
 2. **イベントループが固まる** → `WatchdogSec=60` + サーバ側からの `WATCHDOG=1` ping
 3. **HTTP は応答するが MCP が壊れている** → healthcheck timer（`initialize` →
    `tools/list` まで実際に叩く）
+4. **ループは生きているがツール worker が 1 本の呼び出しで塞がっている**（2026-09-14 型）→
+   同じ healthcheck が `/health` の `tool_executor.busy_seconds` を読み、`--max-tool-busy`
+   （既定 600 秒）を超えていたら unhealthy とする。ツールは呼ばないので、外部依存の障害が
+   restart の連発にはならない
+
+restart（と間引きで見送った分）の履歴は journal の `RESTART_EVENT` 行だけで、専用ファイルは無い:
+
+```bash
+journalctl -t prismind-healthcheck -g RESTART_EVENT
+```
+
+導入時の確認・journald の永続化・実機テストの手順は `deploy/RUNBOOK-t02-hang-probe.md`。
 
 ## 依存の反映（リリース枠に入れる）
 
