@@ -1,20 +1,25 @@
 """Offline evaluation of the Lexora ``/v1/decide`` search re-ranker.
 
 Thread T-decide-rerank, PR2 (Bohr msg-064, revised in msg-066, msg-069
-and msg-073, each cleared by Einstein). It compares search order with re-ranked order on a set of
+and msg-073, each cleared by Einstein; unanswerable pairs added in msg-083
+and msg-085). It compares search order with re-ranked order on a set of
 question → gold-document pairs, so that turning on ``[rerank].enabled``
 can be decided on numbers.
 
 Subcommands
 -----------
 
-``validate-pairs --pairs FILE [--min-pairs 40]``
+``validate-pairs --pairs FILE [--min-pairs 40] [--min-unanswerable 6]``
     Check the pair file's schema (E1). One JSON object per line::
 
         {"qid": "q01", "query": "...", "project": "spirrow",
          "gold_ids": ["<knowledge_id>", ...]}
 
     A pair may have several gold documents; a hit is any of them.
+    ``"gold_ids": []`` marks a question the knowledge base cannot answer
+    (msg-083). ``--min-pairs`` counts answerable pairs only and
+    ``--min-unanswerable`` counts the unanswerable ones, so one kind cannot
+    make up for a shortfall of the other.
 
 ``run-pairs --pairs FILE --out prismind_rerank.jsonl [--config config.toml]``
     Run ``search_knowledge`` in-process for each pair with the re-ranker on,
@@ -82,19 +87,43 @@ cannot be read as a complete one.
   search step, not of the re-ranker.
 * ``reranker`` — top-1 and top-K (K = ``keep_k``) hit, before and after,
   counted only over pairs with ``gold_in_head``.
-* ``overall`` — the same over every evaluated pair (what the user sees).
-* ``no_match`` — 「該当なし」 results, split into *correct* (no gold in
-  the scored candidates) and *wrong* (a gold was there).
+* ``overall`` — the same over every evaluated answerable pair (what the
+  user sees).
+* ``no_match`` — 「該当なし」 results on answerable pairs, split into
+  *correct* (no gold in the scored candidates) and *wrong* (a gold was
+  there).
+* ``unanswerable`` — pairs with ``gold_ids: []`` (msg-083, msg-085). They
+  are kept out of every block above, where they would count as permanent
+  misses. Each falls into exactly one bucket:
 
-A search with zero candidates never reaches Lexora: it is evaluated and
-counts as a miss, not as 「該当なし」.
+  - ``correct_none`` — the re-ranker returned 「該当なし」;
+  - ``false_context`` — context came back anyway, including group (a)
+    fallbacks, since production then returns the search results;
+  - ``no_candidates`` — the search returned nothing, so Lexora was never
+    called. Reported as a count and a share of the evaluated unanswerable
+    pairs, and left out of the two rates, which are over
+    ``correct_none + false_context`` (``measured``). This is a real
+    production outcome, not a collection failure: no ``INCOMPLETE``.
+
+  ``low_n`` carries ``LOW-N: unanswerable has_answer sample < 4`` when
+  fewer than 4 pairs are measured. A warning only: the exit code does not
+  change. Do not tune ``min_noul`` on such a sample; replace the questions
+  that found no candidates with ones closer to what the knowledge base
+  covers.
+
+A search with zero candidates never reaches Lexora: on an answerable pair
+it is evaluated and counts as a miss, not as 「該当なし」.
 
 Order of the real evaluation run (none of it is done by this PR)
 ---------------------------------------------------------------
 
 0. Make the pair file: choose 40-50 real queries, label their gold
-   ``knowledge_id`` values by hand, and check the file with
+   ``knowledge_id`` values by hand, add 6-8 questions the knowledge base
+   cannot answer (``gold_ids: []``), and check the file with
    ``validate-pairs`` (msg-069: no search log exists to take them from).
+   The file stays out of Git (``eval/rerank_pairs.jsonl`` is ignored): the
+   repository is public and the queries hold real work content (msg-081
+   S0-3).
 1. ``run-pairs`` against the deployed RAG server and Lexora
    (``/v1/decide`` on Lexora's main and deployed, ``mode = "shadow"``).
 2. By hand, export Lexora's decision rows for ``policy = 'prismind.rerank'``
@@ -127,7 +156,14 @@ from spirrow_prismind.integrations.lexora_rerank import (  # noqa: E402
 )
 
 PAIR_KEYS = {"qid", "query", "project", "gold_ids"}
+#: Answerable pairs (non-empty ``gold_ids``) required by ``validate-pairs``.
 DEFAULT_MIN_PAIRS = 40
+#: Unanswerable pairs (``gold_ids: []``) required by ``validate-pairs`` (msg-083).
+DEFAULT_MIN_UNANSWERABLE = 6
+#: Below this many unanswerable pairs measured, the ``has_answer`` rates get
+#: the LOW-N warning (msg-085). A warning only: the exit code is unchanged.
+LOW_N_THRESHOLD = 4
+LOW_N_WARNING = f"LOW-N: unanswerable has_answer sample < {LOW_N_THRESHOLD}"
 
 #: Join failures where production would have fallen back to search order:
 #: scored as that fallback and kept in the denominators (msg-073 group a).
@@ -144,8 +180,20 @@ EXIT_INCOMPLETE = 2
 # --------------------------------------------------------------------------
 
 
-def validate_pairs(lines: Iterable[str], min_pairs: int = 0) -> tuple[list[dict], list[str]]:
-    """Parse and check pair lines. Returns ``(pairs, errors)``."""
+def is_unanswerable(pair: dict) -> bool:
+    """A pair whose question no document answers (``gold_ids: []``, msg-083)."""
+    return not pair["gold_ids"]
+
+
+def validate_pairs(
+    lines: Iterable[str], min_pairs: int = 0, min_unanswerable: int = 0
+) -> tuple[list[dict], list[str]]:
+    """Parse and check pair lines. Returns ``(pairs, errors)``.
+
+    ``gold_ids: []`` marks an unanswerable question. ``min_pairs`` counts
+    answerable pairs only, so unanswerable ones cannot stand in for them;
+    ``min_unanswerable`` counts the unanswerable ones (msg-083).
+    """
     pairs: list[dict] = []
     errors: list[str] = []
     seen: set[str] = set()
@@ -185,18 +233,24 @@ def validate_pairs(lines: Iterable[str], min_pairs: int = 0) -> tuple[list[dict]
             bad = True
         if (
             not isinstance(gold, list)
-            or not gold
             or not all(isinstance(g, str) and g for g in gold)
             or len(set(gold)) != len(gold)
         ):
-            errors.append(f"{where}: gold_ids must be a non-empty list of distinct non-empty strings")
+            errors.append(
+                f"{where}: gold_ids must be a list of distinct non-empty strings ([] = unanswerable)"
+            )
             bad = True
         if bad:
             continue
         seen.add(qid)
         pairs.append(obj)
-    if len(pairs) < min_pairs and not errors:
-        errors.append(f"{len(pairs)} pairs, at least {min_pairs} required")
+    if not errors:
+        n_unanswerable = sum(is_unanswerable(p) for p in pairs)
+        n_answerable = len(pairs) - n_unanswerable
+        if n_answerable < min_pairs:
+            errors.append(f"{n_answerable} answerable pairs, at least {min_pairs} required")
+        if n_unanswerable < min_unanswerable:
+            errors.append(f"{n_unanswerable} unanswerable pairs, at least {min_unanswerable} required")
     return pairs, errors
 
 
@@ -348,7 +402,10 @@ def score(pairs: Sequence[dict], prismind_rows: Sequence[dict], lexora_rows: Seq
     fallbacks: dict[str, int] = {}
     sources = {"shadow": 0, "answering": 0, "fallback": 0, "no_candidates": 0}
     evaluated = 0
+    answerable = 0  # evaluated answerable pairs: the denominator of every gold metric
     in_head = 0
+    # Unanswerable pairs (msg-083 / msg-085): each falls into exactly one bucket.
+    u = {"correct_none": 0, "false_context": 0, "no_candidates": 0}
     c = {name: 0 for name in (
         "rr_before_top1", "rr_before_topk", "rr_after_top1", "rr_after_topk",
         "all_before_top1", "all_before_topk", "all_after_top1", "all_after_topk",
@@ -403,6 +460,26 @@ def score(pairs: Sequence[dict], prismind_rows: Sequence[dict], lexora_rows: Seq
 
         sources[source] += 1
         evaluated += 1
+        if is_unanswerable(pair):
+            # Kept out of the retrieval, top-1 / top-K and no_match
+            # denominators: with no gold they would count as permanent misses.
+            if source == "no_candidates":
+                outcome = "no_candidates"  # Lexora never called: no judgement to credit
+            elif after is None:
+                outcome = "correct_none"
+            else:
+                outcome = "false_context"  # includes group (a) fallbacks (msg-083)
+            u[outcome] += 1
+            row = {
+                "qid": qid, "joined": True, "source": source, "unanswerable": True,
+                "outcome": outcome, "before": original[:k],
+                "after": None if after is None else after[:k],
+            }
+            if reason is not None:
+                row["fallback_reason"] = reason if detail is None else f"{reason}: {detail}"
+            per_pair.append(row)
+            continue
+        answerable += 1
         gih = any(kid in gold for kid in head)
         in_head += gih
         before_top1 = _hit(original, gold, 1)
@@ -446,6 +523,8 @@ def score(pairs: Sequence[dict], prismind_rows: Sequence[dict], lexora_rows: Seq
 
     not_collected = sum(unjoined.values())
     n_fallback = sum(fallbacks.values())
+    u_evaluated = sum(u.values())
+    u_measured = u["correct_none"] + u["false_context"]
     return {
         # First, so a partial result is never read as a complete one (msg-069, msg-073).
         "incomplete": (
@@ -457,14 +536,25 @@ def score(pairs: Sequence[dict], prismind_rows: Sequence[dict], lexora_rows: Seq
         "config": {"top_n": cfg.top_n, "keep_k": k, "min_noul": cfg.min_noul},
         "pairs": len(pairs),
         "evaluated": evaluated,
+        "evaluated_answerable": answerable,
         "sources": sources,
-        "retrieval": {"gold_in_head": in_head, "rate": rate(in_head, evaluated)},
+        "retrieval": {"gold_in_head": in_head, "rate": rate(in_head, answerable)},
         "reranker": block("rr", in_head),
-        "overall": block("all", evaluated),
+        "overall": block("all", answerable),
         "no_match": {
-            "count": c["no_match"], "rate": rate(c["no_match"], evaluated),
-            "correct": c["no_match_correct"], "correct_rate": rate(c["no_match_correct"], evaluated),
-            "wrong": c["no_match_wrong"], "wrong_rate": rate(c["no_match_wrong"], evaluated),
+            "count": c["no_match"], "rate": rate(c["no_match"], answerable),
+            "correct": c["no_match_correct"], "correct_rate": rate(c["no_match_correct"], answerable),
+            "wrong": c["no_match_wrong"], "wrong_rate": rate(c["no_match_wrong"], answerable),
+        },
+        "unanswerable": {
+            "evaluated": u_evaluated,
+            # The two rates are over pairs Lexora judged or production fell
+            # back on; no_candidates pairs are outside both (msg-085).
+            "measured": u_measured,
+            "low_n": LOW_N_WARNING if u_measured < LOW_N_THRESHOLD else None,
+            "correct_none": {"count": u["correct_none"], "rate": rate(u["correct_none"], u_measured)},
+            "false_context": {"count": u["false_context"], "rate": rate(u["false_context"], u_measured)},
+            "no_candidates": {"count": u["no_candidates"], "share": rate(u["no_candidates"], u_evaluated)},
         },
         "per_pair": per_pair,
     }
@@ -489,7 +579,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     p = sub.add_parser("validate-pairs", help="check the pair file schema")
     p.add_argument("--pairs", required=True, type=Path)
-    p.add_argument("--min-pairs", type=int, default=DEFAULT_MIN_PAIRS)
+    p.add_argument("--min-pairs", type=int, default=DEFAULT_MIN_PAIRS,
+                   help="answerable pairs (non-empty gold_ids) required")
+    p.add_argument("--min-unanswerable", type=int, default=DEFAULT_MIN_UNANSWERABLE,
+                   help="unanswerable pairs (gold_ids: []) required")
 
     p = sub.add_parser("run-pairs", help="search every pair with the re-ranker on")
     p.add_argument("--pairs", required=True, type=Path)
@@ -507,11 +600,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.cmd == "validate-pairs":
         pairs, errors = validate_pairs(
-            args.pairs.read_text(encoding="utf-8").splitlines(), args.min_pairs
+            args.pairs.read_text(encoding="utf-8").splitlines(), args.min_pairs, args.min_unanswerable
         )
         for e in errors:
             print(e, file=sys.stderr)
-        print(f"{len(pairs)} valid pairs")
+        n_unanswerable = sum(is_unanswerable(p) for p in pairs)
+        print(
+            f"{len(pairs)} valid pairs ({len(pairs) - n_unanswerable} answerable, "
+            f"{n_unanswerable} unanswerable)"
+        )
         return 1 if errors else 0
 
     if args.cmd == "run-pairs":

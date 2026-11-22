@@ -64,3 +64,7 @@ start.sh
 
 # Local snapshots written by scripts/backup.sh (contains credentials)
 backups
+
+# Evaluation pairs: real work queries, never committed to this public repo
+# (T-decide-rerank msg-081 S0-3). Kept on the server only.
+eval/rerank_pairs*.jsonl
