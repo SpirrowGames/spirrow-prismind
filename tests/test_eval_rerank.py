@@ -108,7 +108,8 @@ class TestValidatePairs:
         (pair("", ["k"]), "qid"),
         (pair("a", ["k"], query=" "), "query"),
         ({**pair("a", ["k"]), "project": None}, "project"),
-        (pair("a", []), "gold_ids"),
+        ({**pair("a", ["k"]), "gold_ids": "k"}, "gold_ids"),
+        ({**pair("a", ["k"]), "gold_ids": None}, "gold_ids"),
         (pair("a", ["k", "k"]), "gold_ids"),
         (pair("a", [""]), "gold_ids"),
     ])
@@ -124,8 +125,47 @@ class TestValidatePairs:
     def test_min_pairs(self, tmp_path):
         f = tmp_path / "pairs.jsonl"
         f.write_text(json.dumps(pair("a", ["k"])) + "\n", encoding="utf-8")
-        assert eval_rerank.main(["validate-pairs", "--pairs", str(f), "--min-pairs", "2"]) == 1
-        assert eval_rerank.main(["validate-pairs", "--pairs", str(f), "--min-pairs", "1"]) == 0
+        base = ["validate-pairs", "--pairs", str(f), "--min-unanswerable", "0"]
+        assert eval_rerank.main([*base, "--min-pairs", "2"]) == 1
+        assert eval_rerank.main([*base, "--min-pairs", "1"]) == 0
+
+    # msg-083: unanswerable questions carry gold_ids: [].
+    def test_accepts_empty_gold_ids_as_unanswerable(self):
+        pairs, errors = eval_rerank.validate_pairs([json.dumps(pair("u", []))])
+        assert errors == []
+        assert eval_rerank.is_unanswerable(pairs[0])
+
+    def test_min_pairs_counts_answerable_pairs_only(self):
+        lines = [json.dumps(pair("a", ["k"]))] + [json.dumps(pair(f"u{i}", [])) for i in range(3)]
+        _, errors = eval_rerank.validate_pairs(lines, min_pairs=2)
+        assert errors == ["1 answerable pairs, at least 2 required"]
+
+    def test_min_unanswerable_counts_unanswerable_pairs_only(self):
+        lines = [json.dumps(pair(f"a{i}", ["k"])) for i in range(3)] + [json.dumps(pair("u", []))]
+        _, errors = eval_rerank.validate_pairs(lines, min_unanswerable=2)
+        assert errors == ["1 unanswerable pairs, at least 2 required"]
+
+    def _file(self, tmp_path, n_answerable, n_unanswerable):
+        f = tmp_path / "pairs.jsonl"
+        lines = [json.dumps(pair(f"a{i}", [f"k{i}"])) for i in range(n_answerable)]
+        lines += [json.dumps(pair(f"u{i}", [])) for i in range(n_unanswerable)]
+        f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return f
+
+    @pytest.mark.parametrize("n_unanswerable, rc", [(5, 1), (6, 0)])
+    def test_cli_requires_6_unanswerable_by_default(self, tmp_path, capsys, n_unanswerable, rc):
+        f = self._file(tmp_path, 1, n_unanswerable)
+        assert eval_rerank.DEFAULT_MIN_UNANSWERABLE == 6
+        assert eval_rerank.main(["validate-pairs", "--pairs", str(f), "--min-pairs", "1"]) == rc
+        out = capsys.readouterr()
+        assert f"({1} answerable, {n_unanswerable} unanswerable)" in out.out
+        if rc:
+            assert f"{n_unanswerable} unanswerable pairs, at least 6 required" in out.err
+
+    def test_cli_default_min_pairs_is_40_answerable(self, tmp_path):
+        # 39 answerable + 7 unanswerable is 46 lines, but only 39 count.
+        assert eval_rerank.main(["validate-pairs", "--pairs", str(self._file(tmp_path, 39, 7))]) == 1
+        assert eval_rerank.main(["validate-pairs", "--pairs", str(self._file(tmp_path, 40, 6))]) == 0
 
 
 # --------------------------------------------------------------------------
@@ -191,6 +231,17 @@ class TestRunPairs:
         scored = [c for c in state["candidates"] if c["text"]]
         assert len(scored) == expected
         assert len(state["candidates"]) == 30  # padded to top_n, never keep_k
+
+    def test_zero_candidates_never_call_lexora(self):
+        # msg-085: an unanswerable question whose search finds nothing never
+        # reaches Lexora; run-pairs still writes its line so score can
+        # put it in the no_candidates bucket.
+        requests: list[dict] = []
+        lines = eval_rerank.run_pairs([pair("u", [])], _tools([], requests=requests), keep_k=2)
+        assert requests == []
+        assert lines[0]["qid"] == "u"
+        assert lines[0]["n_candidates"] == 0
+        assert lines[0]["called"] is False and lines[0]["decision_id"] is None
 
     def test_skipped_rerank_fails_loudly(self):
         # A disabled re-ranker logs nothing; run_pairs must not write a
@@ -360,6 +411,100 @@ class TestMetrics:
         r = _score([], [], [])
         assert r["retrieval"]["rate"] is None
         assert r["reranker"]["after"]["top1_rate"] is None
+
+
+class TestUnanswerable:
+    """msg-083 / msg-085: pairs with gold_ids: []."""
+
+    IDS = ["k0", "k1", "k2", "k3"]
+
+    def _pairs(self, kinds):
+        """kinds: list of 'none' / 'context' / 'fallback' / 'empty' for unanswerable pairs."""
+        pairs, prismind, lexora = [], [], []
+        for i, kind in enumerate(kinds):
+            qid, did = f"u{i}", f"d-u{i}"
+            pairs.append(pair(qid, []))
+            if kind == "empty":
+                prismind.append(prismind_line(qid, [], None))
+                continue
+            prismind.append(prismind_line(qid, self.IDS, did))
+            if kind == "none":
+                lexora.append(shadow_row(did, [0.9] * 4, has_answer=0.1))
+            elif kind == "context":
+                lexora.append(shadow_row(did, [0.9] * 4, has_answer=0.9))
+            elif kind == "fallback":
+                lexora.append(shadow_row(did, [], error="jev:timeout"))
+        return pairs, prismind, lexora
+
+    def test_each_pair_lands_in_exactly_one_bucket(self):
+        r = _score(*self._pairs(["none", "none", "context", "fallback", "empty"]))
+        u = r["unanswerable"]
+        assert u["evaluated"] == 5
+        assert u["measured"] == 4
+        assert u["correct_none"] == {"count": 2, "rate": 0.5}
+        # A group (a) fallback returns the search results: false context (msg-083).
+        assert u["false_context"] == {"count": 2, "rate": 0.5}
+        assert u["no_candidates"] == {"count": 1, "share": 0.2}
+        outcomes = [row["outcome"] for row in r["per_pair"]]
+        assert outcomes == ["correct_none", "correct_none", "false_context", "false_context", "no_candidates"]
+        assert all(row["unanswerable"] for row in r["per_pair"])
+
+    def test_kept_out_of_every_answerable_denominator(self):
+        # One answerable hit plus unanswerable pairs of every kind: the
+        # answerable blocks must read exactly as if the latter were absent.
+        ans_pairs = [pair("a", ["k2"])]
+        ans_prismind = [prismind_line("a", self.IDS, "d-a")]
+        ans_lexora = [shadow_row("d-a", [0.1, 0.2, 0.9, 0.3])]
+        alone = _score(ans_pairs, ans_prismind, ans_lexora)
+        up, uprism, ulex = self._pairs(["none", "context", "fallback", "empty"])
+        mixed = _score(ans_pairs + up, ans_prismind + uprism, ans_lexora + ulex)
+        for key in ("retrieval", "reranker", "overall", "no_match"):
+            assert mixed[key] == alone[key], key
+        assert mixed["overall"]["n"] == 1 and mixed["retrieval"] == {"gold_in_head": 1, "rate": 1.0}
+        assert mixed["evaluated"] == 5 and mixed["evaluated_answerable"] == 1
+        # The fallback still shows up in the runtime fallback count, over all evaluated pairs.
+        assert mixed["fallback"] == {"count": 1, "rate": 0.2, "by_reason": {"shadow_failed": 1}}
+
+    def test_no_candidates_is_not_incomplete_and_needs_no_lexora_row(self):
+        r = _score(*self._pairs(["empty"]))
+        assert r["incomplete"] is None
+        assert r["join"]["not_collected"] == 0
+        assert r["unanswerable"]["no_candidates"] == {"count": 1, "share": 1.0}
+        assert r["unanswerable"]["measured"] == 0
+        assert r["unanswerable"]["correct_none"]["rate"] is None
+        assert r["unanswerable"]["false_context"]["rate"] is None
+
+    def test_not_collected_unanswerable_is_group_b(self):
+        # A missing Lexora row is a collection failure whatever the pair kind.
+        r = _score([pair("u", [])], [prismind_line("u", self.IDS, "d1")], [])
+        assert r["incomplete"] is not None
+        assert r["join"]["by_reason"] == {"no_lexora_row": 1}
+        assert r["unanswerable"]["evaluated"] == 0
+
+    @pytest.mark.parametrize("kinds, warned", [
+        (["none", "context", "none"], True),                     # 3 measured
+        (["none", "context", "none", "empty", "empty"], True),   # no_candidates do not count
+        (["none", "context", "none", "fallback"], False),        # 4 measured
+        ([], True),                                              # nothing measured at all
+    ])
+    def test_low_n_warning(self, kinds, warned):
+        r = _score(*self._pairs(kinds))
+        assert r["unanswerable"]["low_n"] == (eval_rerank.LOW_N_WARNING if warned else None)
+        assert r["incomplete"] is None
+
+    def test_low_n_does_not_change_the_exit_code(self, tmp_path, capsys):
+        pairs, prismind, lexora = self._pairs(["none", "empty"])
+        (tmp_path / "pairs.jsonl").write_text("".join(json.dumps(p) + "\n" for p in pairs), encoding="utf-8")
+        (tmp_path / "p.jsonl").write_text("".join(json.dumps(x) + "\n" for x in prismind), encoding="utf-8")
+        (tmp_path / "l.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lexora), encoding="utf-8")
+        rc = eval_rerank.main([
+            "score", "--pairs", str(tmp_path / "pairs.jsonl"),
+            "--prismind-log", str(tmp_path / "p.jsonl"), "--lexora-log", str(tmp_path / "l.jsonl"),
+        ])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["unanswerable"]["low_n"] == "LOW-N: unanswerable has_answer sample < 4"
+        assert out["unanswerable"]["no_candidates"]["count"] == 1
 
 
 def test_score_cli_end_to_end(tmp_path, capsys):
