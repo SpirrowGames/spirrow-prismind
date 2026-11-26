@@ -24,8 +24,9 @@ Invariants this module keeps:
   Rerank never fails a search.
 * Every call that reaches Lexora writes one structured log line. That
   line carries ``decision_id`` and the slot→knowledge_id map, which are
-  the keys offline evaluation joins against Lexora's shadow rows
-  (``shadow_of = decision_id``) (msg-005 A2, D5).
+  the keys offline evaluation joins against Lexora's decision rows
+  (shadow rows in shadow mode, answer rows in active mode) (msg-005 A2,
+  D5; corrected in T-decide-rerank msg-145 D6.3).
 
 No TypeSafe SDK and no ``api.typesafe.ai``: this module talks only to the
 Lexora URL in ``[rerank].lexora_url`` (msg-002).
